@@ -174,7 +174,7 @@ export class MovementModule extends DustGameBase {
   async spawn(
     spawnTileEntityId: string,
     spawnCoord: Vec3,
-    spawnEnergy: number = 25,
+    spawnEnergy: bigint = 245280000000000000n,
     extraData: string = "0x"
   ): Promise<void> {
     console.log(`✨ Spawning character...`);
