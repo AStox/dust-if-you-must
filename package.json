@@ -1,0 +1,26 @@
+{
+  "name": "dust-game-bot",
+  "version": "1.0.0",
+  "description": "Autonomous bot for Dust game on MUD framework",
+  "main": "index.js",
+  "scripts": {
+    "start": "tsx src/index.ts",
+    "test": "tsx src/test-setup.ts",
+    "build": "tsc",
+    "dev": "tsx --watch src/index.ts",
+    "spawn": "tsx scripts/spawn.ts",
+    "move": "tsx scripts/simple-move.ts",
+    "farm": "tsx scripts/farming-demo.ts",
+    "build-demo": "tsx scripts/building-demo.ts",
+    "craft": "tsx scripts/crafting-demo.ts"
+  },
+  "dependencies": {
+    "ethers": "^6.8.1",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^20.8.7",
+    "tsx": "^4.1.2",
+    "typescript": "^5.2.2"
+  }
+}
