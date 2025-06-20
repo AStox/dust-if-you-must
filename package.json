@@ -8,9 +8,8 @@
     "test": "tsx src/test-setup.ts",
     "build": "tsc",
     "dev": "tsx --watch src/index.ts",
-    "spawn": "tsx scripts/spawn.ts",
+    "farm": "tsx scripts/farm-procedure.ts",
     "move": "tsx scripts/simple-move.ts",
-    "farm": "tsx scripts/farming-demo.ts",
     "build-demo": "tsx scripts/building-demo.ts",
     "craft": "tsx scripts/crafting-demo.ts"
   },

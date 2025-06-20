@@ -152,23 +152,20 @@ export abstract class DustGameBase {
     description: string,
     useOptimizedGas: boolean = true
   ): Promise<ethers.TransactionReceipt> {
-    console.log(`🔄 ${description}...`);
-    console.log(`🎯 System: ${systemId}`);
-    console.log(`📋 Function: ${functionSig}`);
-    console.log(
-      `📦 Parameters:`,
-      params.map(
-        (p, i) =>
-          `  ${i}: ${
-            typeof p === "string" && p.length > 50 ? p.slice(0, 50) + "..." : p
-          }`
-      )
-    );
+    // console.log(`📋 Function: ${functionSig}`);
+    // console.log(
+    //   `📦 Parameters:`,
+    //   params.map(
+    //     (p, i) =>
+    //       `  ${i}: ${
+    //         typeof p === "string" && p.length > 50 ? p.slice(0, 50) + "..." : p
+    //       }`
+    //   )
+    // );
 
     try {
       // Encode the function call data
       const callData = this.encodeCall(functionSig, params);
-      console.log(`📡 Encoded call data: ${callData}`);
 
       // Use optimized gas settings for Redstone chain
       let gasLimit: bigint;
@@ -180,13 +177,6 @@ export abstract class DustGameBase {
         gasLimit = BigInt(process.env.GAS_LIMIT || "200000"); // Much lower default
         maxFeePerGas = ethers.parseUnits("0.000002", "gwei"); // Very low for Redstone
         maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei"); // Minimal priority fee
-
-        console.log(
-          `⛽ Using optimized gas: limit=${gasLimit}, maxFee=${ethers.formatUnits(
-            maxFeePerGas,
-            "gwei"
-          )} gwei`
-        );
       } else {
         // Try to estimate gas, but fallback to reasonable defaults
         gasLimit = await this.estimateGas(systemId, callData);
@@ -203,9 +193,6 @@ export abstract class DustGameBase {
         maxPriorityFeePerGas: maxPriorityFeePerGas,
         value: 0,
       });
-      console.log(
-        `to: ${process.env.WORLD_ADDRESS}, from: ${this.wallet.address}, function: ${functionSig}, params: ${params}`
-      );
 
       console.log(`🔄 Transaction sent: ${tx.hash}`);
       console.log("⏳ Waiting for confirmation...");
@@ -213,8 +200,9 @@ export abstract class DustGameBase {
       const receipt = await tx.wait(1);
 
       if (receipt && receipt.status === 1) {
-        console.log(`✅ ${description} successful!`);
-        console.log(`🧾 Gas used: ${receipt.gasUsed}`);
+        console.log(
+          `================= ✅ ${description} successful! =================`
+        );
         return receipt;
       } else {
         throw new Error(
@@ -224,7 +212,6 @@ export abstract class DustGameBase {
         );
       }
     } catch (error) {
-      console.error(`❌ ${description} failed:`, error);
       throw error;
     }
   }
@@ -299,7 +286,6 @@ export abstract class DustGameBase {
         dynamicData: result[2],
       };
     } catch (error) {
-      console.error("❌ Failed to read game state:", error);
       throw error;
     }
   }

@@ -1,6 +1,6 @@
 import { DustGameBase } from "../core/base.js";
 import { Vec3 } from "../types.js";
-import { encodeVec3, isValidCoordinate } from "../utils.js";
+import { packVec3, isValidCoordinate } from "../utils.js";
 
 export class FarmingModule extends DustGameBase {
   // Fill bucket from water source (BucketSystem)
@@ -18,7 +18,7 @@ export class FarmingModule extends DustGameBase {
       "fillBucket(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         slot,
         "0x", // empty extraData
       ],
@@ -41,7 +41,7 @@ export class FarmingModule extends DustGameBase {
       "wetFarmland(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         slot,
         "0x", // empty extraData
       ],
@@ -64,7 +64,7 @@ export class FarmingModule extends DustGameBase {
       "till(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         toolSlot,
         "0x", // empty extraData
       ],
@@ -87,7 +87,7 @@ export class FarmingModule extends DustGameBase {
       "plant(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         seedSlot,
         "0x", // empty extraData
       ],
@@ -110,7 +110,7 @@ export class FarmingModule extends DustGameBase {
       "harvest(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         toolSlot,
         "0x", // empty extraData
       ],
@@ -146,7 +146,6 @@ export class FarmingModule extends DustGameBase {
       );
       console.log("💡 Use harvest() later to collect the grown crops.");
     } catch (error) {
-      console.error("❌ Farming cycle failed:", error);
       throw error;
     }
   }
@@ -228,7 +227,6 @@ export class FarmingModule extends DustGameBase {
 
       console.log("✅ All farms set up successfully!");
     } catch (error) {
-      console.error("❌ Farm setup failed:", error);
       throw error;
     }
   }

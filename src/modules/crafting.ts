@@ -1,7 +1,7 @@
 import { DustGameBase } from "../core/base.js";
 import { SlotAmount } from "../types.js";
 import { Vec3, ObjectType } from "../types.js";
-import { encodeVec3, isValidCoordinate } from "../utils.js";
+import { packVec3, isValidCoordinate } from "../utils.js";
 
 export interface Recipe {
   id: string;
@@ -106,7 +106,7 @@ export class CraftingModule extends DustGameBase {
       "craftWithStation(bytes32,uint96,uint16,uint16,uint16[],uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(stationCoord),
+        packVec3(stationCoord),
         recipeId,
         quantity,
         inputSlots,

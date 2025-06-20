@@ -1,6 +1,6 @@
 import { DustGameBase } from "../core/base.js";
 import { Vec3, ObjectType } from "../types.js";
-import { encodeVec3, isValidCoordinate } from "../utils.js";
+import { packVec3, isValidCoordinate } from "../utils.js";
 
 export class BuildingModule extends DustGameBase {
   // Mine a block at specific coordinates (MineSystem)
@@ -18,7 +18,7 @@ export class BuildingModule extends DustGameBase {
       "mine(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         toolSlot,
         "0x", // empty extraData
       ],
@@ -41,7 +41,7 @@ export class BuildingModule extends DustGameBase {
       "mineUntilDestroyed(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         toolSlot,
         "0x", // empty extraData
       ],
@@ -80,7 +80,7 @@ export class BuildingModule extends DustGameBase {
       "build(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         slot,
         "0x", // empty extraData - could contain block type info
       ],
@@ -107,7 +107,7 @@ export class BuildingModule extends DustGameBase {
       "buildWithOrientation(bytes32,uint96,uint16,uint8,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         slot,
         orientation,
         "0x", // empty extraData
@@ -131,7 +131,7 @@ export class BuildingModule extends DustGameBase {
       "jumpBuild(bytes32,uint96,uint16,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         slot,
         "0x", // empty extraData
       ],
@@ -158,7 +158,7 @@ export class BuildingModule extends DustGameBase {
       "jumpBuildWithOrientation(bytes32,uint96,uint16,uint8,bytes)",
       [
         this.characterEntityId,
-        encodeVec3(coord),
+        packVec3(coord),
         slot,
         orientation,
         "0x", // empty extraData

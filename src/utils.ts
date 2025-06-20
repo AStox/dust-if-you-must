@@ -10,16 +10,6 @@ export function encodeEntityId(entityId: EntityId): string {
   return ethers.zeroPadValue(entityId, 32);
 }
 
-// Encode Vec3 coordinates into uint96 (32 bits each for x,y,z)
-export function encodeVec3(coord: Vec3): bigint {
-  // Each coordinate is 32 bits, total 96 bits
-  const x = BigInt(coord.x) & 0xffffffffn;
-  const y = BigInt(coord.y) & 0xffffffffn;
-  const z = BigInt(coord.z) & 0xffffffffn;
-
-  return (z << 64n) | (y << 32n) | x;
-}
-
 export function packVec3(coord: Vec3): bigint {
   // Convert each signed 32-bit integer into an unsigned 32-bit number,
   // then to BigInt for safe 64-bit+ operations.
@@ -43,7 +33,7 @@ export function decodeVec3(encoded: bigint): Vec3 {
 
 // Encode array of Vec3 coordinates
 export function encodeVec3Array(coords: Vec3[]): string {
-  const encoded = coords.map((coord) => encodeVec3(coord));
+  const encoded = coords.map((coord) => packVec3(coord));
   return ethers.AbiCoder.defaultAbiCoder().encode(["uint96[]"], [encoded]);
 }
 
@@ -56,7 +46,7 @@ export function encodeMoveCall(caller: EntityId, newCoords: Vec3[]): string {
   const functionSelector = ethers.id("move(bytes32,uint96[])").slice(0, 10);
   const encodedParams = ethers.AbiCoder.defaultAbiCoder().encode(
     ["bytes32", "uint96[]"],
-    [callerEncoded, newCoords.map((coord) => encodeVec3(coord))]
+    [callerEncoded, newCoords.map((coord) => packVec3(coord))]
   );
 
   return functionSelector + encodedParams.slice(2);
