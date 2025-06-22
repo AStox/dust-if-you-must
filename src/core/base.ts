@@ -1,6 +1,13 @@
 import { ethers } from "ethers";
 import { EntityId } from "../types.js";
 
+// Player state enum
+export enum PlayerState {
+  DEAD = "DEAD",
+  SLEEPING = "SLEEPING",
+  AWAKE = "AWAKE",
+}
+
 export abstract class DustGameBase {
   protected provider: ethers.JsonRpcProvider;
   protected wallet: ethers.Wallet;
@@ -152,16 +159,20 @@ export abstract class DustGameBase {
     description: string,
     useOptimizedGas: boolean = true
   ): Promise<ethers.TransactionReceipt> {
-    // console.log(`📋 Function: ${functionSig}`);
-    // console.log(
-    //   `📦 Parameters:`,
-    //   params.map(
-    //     (p, i) =>
-    //       `  ${i}: ${
-    //         typeof p === "string" && p.length > 50 ? p.slice(0, 50) + "..." : p
-    //       }`
-    //   )
-    // );
+    if (functionSig !== "move(bytes32,uint96[])") {
+      console.log(`📋 Function: ${functionSig}`);
+      console.log(
+        `📦 Parameters:`,
+        params.map(
+          (p, i) =>
+            `  ${i}: ${
+              typeof p === "string" && p.length > 50
+                ? p.slice(0, 50) + "..."
+                : p
+            }`
+        )
+      );
+    }
 
     try {
       // Encode the function call data
@@ -195,7 +206,6 @@ export abstract class DustGameBase {
       });
 
       console.log(`🔄 Transaction sent: ${tx.hash}`);
-      console.log("⏳ Waiting for confirmation...");
 
       const receipt = await tx.wait(1);
 
@@ -287,6 +297,117 @@ export abstract class DustGameBase {
       };
     } catch (error) {
       throw error;
+    }
+  }
+
+  // Check if player is dead (Energy = 0)
+  async isPlayerDead(entityId?: EntityId): Promise<boolean> {
+    try {
+      const playerId = entityId || this.characterEntityId;
+      // Energy table ID: "Energy" -> hex encoded (WorldResourceIdLib format)
+      const energyTableId =
+        "0x74620000000000000000000000000000456e6572677900000000000000000000";
+
+      const result = await this.getRecord(energyTableId, [playerId]);
+
+      if (!result.staticData || result.staticData === "0x") {
+        console.log("⚠️ No energy data found - player might be dead");
+        return true; // No energy data usually means dead
+      }
+
+      // Energy is stored as uint128 (16 bytes)
+      const energyHex = result.staticData.slice(2);
+
+      // Parse energy as big integer
+      const energy = BigInt("0x" + energyHex.slice(33, 64));
+      console.log(`⚡ Player energy: ${energy}`);
+
+      return energy === 0n;
+    } catch (error) {
+      console.log("⚠️ Failed to check player energy:", error);
+      return true; // Assume dead if we can't check
+    }
+  }
+
+  // Check if player is sleeping (has bed assigned)
+  async isPlayerSleeping(entityId?: EntityId): Promise<boolean> {
+    try {
+      const playerId = entityId || this.characterEntityId;
+      // PlayerBed table ID: "PlayerBed" -> hex encoded (WorldResourceIdLib format)
+      const playerBedTableId =
+        "0x74620000000000000000000000000000506c6179657242656400000000000000";
+
+      const result = await this.getRecord(playerBedTableId, [playerId]);
+
+      if (!result.staticData || result.staticData === "0x") {
+        console.log("😴 No bed data found - player is not sleeping");
+        return false;
+      }
+
+      // Check if bed entity ID exists (non-zero)
+      const bedHex = result.staticData.slice(2);
+      if (bedHex.length < 64) {
+        // 32 bytes = 64 hex chars for EntityId
+        return false;
+      }
+
+      const bedEntityId = "0x" + bedHex.slice(0, 64);
+      const isAssigned = bedEntityId !== "0x" + "0".repeat(64);
+
+      if (isAssigned) {
+        console.log(`😴 Player is sleeping in bed: ${bedEntityId}`);
+      } else {
+        console.log("😴 Player is not sleeping");
+      }
+
+      return isAssigned;
+    } catch (error) {
+      console.log("⚠️ Failed to check player bed status:", error);
+      return false; // Assume not sleeping if we can't check
+    }
+  }
+
+  // Get comprehensive player state
+  async getPlayerState(entityId?: EntityId): Promise<PlayerState> {
+    const playerId = entityId || this.characterEntityId;
+
+    console.log(`🔍 Checking state for player: ${playerId}`);
+
+    // Check if dead first (energy = 0)
+    const isDead = await this.isPlayerDead(playerId);
+    if (isDead) {
+      console.log("💀 Player is DEAD");
+      return PlayerState.DEAD;
+    }
+
+    // Check if sleeping (has bed assigned)
+    const isSleeping = await this.isPlayerSleeping(playerId);
+    if (isSleeping) {
+      console.log("😴 Player is SLEEPING");
+      return PlayerState.SLEEPING;
+    }
+
+    console.log("✅ Player is AWAKE");
+    return PlayerState.AWAKE;
+  }
+
+  // Get player energy level
+  async getPlayerEnergy(entityId?: EntityId): Promise<string> {
+    try {
+      const playerId = entityId || this.characterEntityId;
+      const energyTableId =
+        "0x74620000000000000000000000000000456e6572677900000000000000000000";
+      const result = await this.getRecord(energyTableId, [playerId]);
+
+      if (!result.staticData || result.staticData === "0x") {
+        return "0";
+      }
+
+      const energyHex = result.staticData.slice(2);
+      const energy = BigInt("0x" + energyHex.slice(32, 64));
+      return energy.toString();
+    } catch (error) {
+      return "0";
     }
   }
 

@@ -88,20 +88,21 @@ export class MovementModule extends DustGameBase {
       if (currentPos.x < target.x) step.x++;
       else if (currentPos.x > target.x) step.x--;
 
-      if (currentPos.y < target.y) step.y++;
+      const movingUp = currentPos.y < target.y;
+      if (movingUp) step.y++;
       else if (currentPos.y > target.y) step.y--;
 
       if (currentPos.z < target.z) step.z++;
       else if (currentPos.z > target.z) step.z--;
 
-      // Add jump: move up one block on every step
-      step.y++;
+      // Add jump: move up one block on every step (only if not already moving up)
+      if (!movingUp) {
+        step.y++;
+      }
 
-      console.log(`🔍 Step ${stepIndex}/${totalSteps}`);
-      // console.log(
-      //   `   Current position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
-      // );
-      // console.log(`   Next position: (${step.x}, ${step.y}, ${step.z})`);
+      console.log(
+        `📍 Bot position: (${this.lastKnownPosition?.x}, ${this.lastKnownPosition?.y}, ${this.lastKnownPosition?.z}) 🔍 Step ${stepIndex}/${totalSteps}`
+      );
 
       const distance = this.calculateChebyshevDistance(currentPos, step);
       // console.log(`   Chebyshev distance: ${distance}`);
@@ -201,14 +202,17 @@ export class MovementModule extends DustGameBase {
       if (current.x < to.x) next.x++;
       else if (current.x > to.x) next.x--;
 
-      if (current.y < to.y) next.y++;
+      const movingUp = current.y < to.y;
+      if (movingUp) next.y++;
       else if (current.y > to.y) next.y--;
 
       if (current.z < to.z) next.z++;
       else if (current.z > to.z) next.z--;
 
-      // Add jump: move up one block on every step
-      next.y++;
+      // Add jump: move up one block on every step (only if not already moving up)
+      if (!movingUp) {
+        next.y++;
+      }
 
       steps.push(next);
       current = next;
@@ -262,7 +266,13 @@ export class MovementModule extends DustGameBase {
           const previousPos =
             stepIndex === 0 ? fromCoord : stepPath[stepIndex - 1];
 
-          console.log(`🔍 Step ${stepIndex + 1}/${stepPath.length}:`);
+          console.log(
+            `📍 Bot position: (${this.lastKnownPosition?.x}, ${
+              this.lastKnownPosition?.y
+            }, ${this.lastKnownPosition?.z}) 🔍 Step ${stepIndex + 1}/${
+              stepPath.length
+            }:`
+          );
           console.log(
             `   Current position: (${previousPos.x}, ${previousPos.y}, ${previousPos.z})`
           );
@@ -562,9 +572,6 @@ export class MovementModule extends DustGameBase {
       const z = this.hexToInt32(zHex);
 
       const position = { x, y, z };
-      console.log(
-        `📍 Bot position: (${position.x}, ${position.y}, ${position.z})`
-      );
 
       return position;
     } catch (error) {

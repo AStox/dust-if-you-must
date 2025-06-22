@@ -4,6 +4,7 @@ import { FarmingModule } from "./modules/farming.js";
 import { BuildingModule } from "./modules/building.js";
 import { CraftingModule } from "./modules/crafting.js";
 import { Vec3 } from "./types.js";
+import { PlayerState } from "./core/base.js";
 
 // Load environment variables
 dotenv.config();
@@ -34,6 +35,23 @@ export class DustBot {
     console.log(`💰 Balance: ${info.balance} ETH`);
     console.log(`👤 Character: ${info.entityId}`);
     return info;
+  }
+
+  // Player state checking methods
+  async getPlayerState(): Promise<PlayerState> {
+    return await this.movement.getPlayerState();
+  }
+
+  async isPlayerDead(): Promise<boolean> {
+    return await this.movement.isPlayerDead();
+  }
+
+  async isPlayerSleeping(): Promise<boolean> {
+    return await this.movement.isPlayerSleeping();
+  }
+
+  async getPlayerEnergy(): Promise<string> {
+    return await this.movement.getPlayerEnergy();
   }
 }
 
