@@ -19,18 +19,6 @@ export interface SlotAmount {
   amount: number;
 }
 
-export enum ObjectType {
-  // Add object types as needed
-  EMPTY = 0,
-  DIRT = 1,
-  WATER = 2,
-  GRASS = 3,
-  STONE = 4,
-  WOOD = 5,
-  SAND = 6,
-  // ... other types
-}
-
 // Contract function signatures for encoding
 export interface DustWorldFunctions {
   activate: string;

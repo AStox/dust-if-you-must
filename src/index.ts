@@ -3,6 +3,9 @@ import { MovementModule } from "./modules/movement.js";
 import { FarmingModule } from "./modules/farming.js";
 import { BuildingModule } from "./modules/building.js";
 import { CraftingModule } from "./modules/crafting.js";
+import { PlayerModule } from "./modules/player.js";
+import { WorldModule } from "./modules/world.js";
+import { InventoryModule } from "./modules/inventory.js";
 import { Vec3 } from "./types.js";
 import { PlayerState } from "./core/base.js";
 
@@ -14,7 +17,9 @@ export class DustBot {
   public farming: FarmingModule;
   public building: BuildingModule;
   public crafting: CraftingModule;
-
+  public player: PlayerModule;
+  public world: WorldModule;
+  public inventory: InventoryModule;
   constructor() {
     console.log("🤖 Initializing Dust Bot...");
 
@@ -23,7 +28,9 @@ export class DustBot {
     this.farming = new FarmingModule();
     this.building = new BuildingModule();
     this.crafting = new CraftingModule();
-
+    this.player = new PlayerModule();
+    this.world = new WorldModule();
+    this.inventory = new InventoryModule();
     console.log("✅ All modules initialized!");
   }
 
@@ -39,19 +46,29 @@ export class DustBot {
 
   // Player state checking methods
   async getPlayerState(): Promise<PlayerState> {
-    return await this.movement.getPlayerState();
+    return await this.player.getPlayerState();
   }
 
   async isPlayerDead(): Promise<boolean> {
-    return await this.movement.isPlayerDead();
+    return await this.player.isPlayerDead();
   }
 
   async isPlayerSleeping(): Promise<boolean> {
-    return await this.movement.isPlayerSleeping();
+    return await this.player.isPlayerSleeping();
   }
 
   async getPlayerEnergy(): Promise<string> {
-    return await this.movement.getPlayerEnergy();
+    return await this.player.getPlayerEnergy();
+  }
+
+  // Check player status with comprehensive information
+  async checkPlayerStatus(action: string): Promise<{
+    position: Vec3 | null;
+    energy: string;
+    isDead: boolean;
+    isSleeping: boolean;
+  }> {
+    return await this.player.checkPlayerStatus(this, action);
   }
 }
 

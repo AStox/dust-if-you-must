@@ -1,6 +1,7 @@
 import { DustGameBase } from "../core/base.js";
 import { Vec3 } from "../types.js";
 import { packVec3, isValidCoordinate } from "../utils.js";
+import { ObjectTypes, getObjectIdByName } from "../types/objectTypes.js";
 
 export class FarmingModule extends DustGameBase {
   // Fill bucket from water source (BucketSystem)
@@ -254,54 +255,6 @@ export class FarmingModule extends DustGameBase {
       `🎯 Checking farmland at: (${coord.x}, ${coord.y}, ${coord.z})`
     );
     return false; // Placeholder
-  }
-
-  // Get inventory slot contents
-  async getInventorySlot(
-    slot: number
-  ): Promise<{ itemType: number; amount: number } | null> {
-    try {
-      // Inventory table ID - this may need adjustment based on actual game implementation
-      const inventoryTableId =
-        "0x7462000000000000000000000000000000496e76656e746f7279000000000000";
-
-      // Create key tuple for the inventory slot - convert slot number to bytes32
-      const slotBytes32 = "0x" + slot.toString(16).padStart(64, "0");
-      const keyTuple = [this.characterEntityId, slotBytes32];
-
-      // Get record from inventory table
-      const result = await this.getRecord(inventoryTableId, keyTuple);
-
-      if (
-        !result.staticData ||
-        result.staticData === "0x" ||
-        result.staticData === "0x00000000000000000000000000000000"
-      ) {
-        return null; // Empty slot
-      }
-
-      // Decode inventory data from staticData
-      // Assuming inventory stores itemType (4 bytes) and amount (4 bytes)
-      const staticData = result.staticData;
-
-      if (staticData.length < 18) {
-        // 0x + 16 hex chars (8 bytes)
-        return null; // Invalid data
-      }
-
-      // Extract itemType and amount
-      const hexData = staticData.slice(2);
-      const itemTypeHex = hexData.slice(0, 8);
-      const amountHex = hexData.slice(8, 16);
-
-      const itemType = parseInt(itemTypeHex, 16);
-      const amount = parseInt(amountHex, 16);
-
-      return { itemType, amount };
-    } catch (error) {
-      console.log(`⚠️ Failed to read inventory slot ${slot}:`, error);
-      return null;
-    }
   }
 
   // Check crop growth stage (would need actual game state reading)

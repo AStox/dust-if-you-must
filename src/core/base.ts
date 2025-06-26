@@ -1,5 +1,15 @@
 import { ethers } from "ethers";
-import { EntityId } from "../types.js";
+import { EntityId, Vec3 } from "../types.js";
+import DustBot from "../index.js";
+import path from "path";
+import fs from "fs";
+
+interface PendingTransaction {
+  hash: string;
+  description: string;
+  timestamp: number;
+  promise: Promise<ethers.TransactionReceipt>;
+}
 
 // Player state enum
 export enum PlayerState {
@@ -54,95 +64,10 @@ export abstract class DustGameBase {
     this.characterEntityId = process.env.CHARACTER_ENTITY_ID!;
 
     // Updated World contract ABI with MUD functions
-    const worldABI = [
-      {
-        inputs: [
-          {
-            internalType: "ResourceId",
-            name: "systemId",
-            type: "bytes32",
-          },
-          {
-            internalType: "bytes",
-            name: "callData",
-            type: "bytes",
-          },
-        ],
-        name: "call",
-        outputs: [
-          {
-            internalType: "bytes",
-            name: "",
-            type: "bytes",
-          },
-        ],
-        stateMutability: "payable",
-        type: "function",
-      },
-      {
-        inputs: [
-          {
-            internalType: "address",
-            name: "delegator",
-            type: "address",
-          },
-          {
-            internalType: "ResourceId",
-            name: "systemId",
-            type: "bytes32",
-          },
-          {
-            internalType: "bytes",
-            name: "callData",
-            type: "bytes",
-          },
-        ],
-        name: "callFrom",
-        outputs: [
-          {
-            internalType: "bytes",
-            name: "",
-            type: "bytes",
-          },
-        ],
-        stateMutability: "payable",
-        type: "function",
-      },
-      {
-        inputs: [
-          {
-            internalType: "ResourceId",
-            name: "tableId",
-            type: "bytes32",
-          },
-          {
-            internalType: "bytes32[]",
-            name: "keyTuple",
-            type: "bytes32[]",
-          },
-        ],
-        name: "getRecord",
-        outputs: [
-          {
-            internalType: "bytes",
-            name: "staticData",
-            type: "bytes",
-          },
-          {
-            internalType: "EncodedLengths",
-            name: "encodedLengths",
-            type: "bytes32",
-          },
-          {
-            internalType: "bytes",
-            name: "dynamicData",
-            type: "bytes",
-          },
-        ],
-        stateMutability: "view",
-        type: "function",
-      },
-    ];
+    const worldABI = fs.readFileSync(
+      path.join(__dirname, "worldAbi.json"),
+      "utf8"
+    );
 
     this.worldContract = new ethers.Contract(
       process.env.WORLD_ADDRESS!,
@@ -320,7 +245,6 @@ export abstract class DustGameBase {
 
       // Parse energy as big integer
       const energy = BigInt("0x" + energyHex.slice(33, 64));
-      console.log(`⚡ Player energy: ${energy}`);
 
       return energy === 0n;
     } catch (error) {
@@ -356,58 +280,12 @@ export abstract class DustGameBase {
 
       if (isAssigned) {
         console.log(`😴 Player is sleeping in bed: ${bedEntityId}`);
-      } else {
-        console.log("😴 Player is not sleeping");
       }
 
       return isAssigned;
     } catch (error) {
       console.log("⚠️ Failed to check player bed status:", error);
       return false; // Assume not sleeping if we can't check
-    }
-  }
-
-  // Get comprehensive player state
-  async getPlayerState(entityId?: EntityId): Promise<PlayerState> {
-    const playerId = entityId || this.characterEntityId;
-
-    console.log(`🔍 Checking state for player: ${playerId}`);
-
-    // Check if dead first (energy = 0)
-    const isDead = await this.isPlayerDead(playerId);
-    if (isDead) {
-      console.log("💀 Player is DEAD");
-      return PlayerState.DEAD;
-    }
-
-    // Check if sleeping (has bed assigned)
-    const isSleeping = await this.isPlayerSleeping(playerId);
-    if (isSleeping) {
-      console.log("😴 Player is SLEEPING");
-      return PlayerState.SLEEPING;
-    }
-
-    console.log("✅ Player is AWAKE");
-    return PlayerState.AWAKE;
-  }
-
-  // Get player energy level
-  async getPlayerEnergy(entityId?: EntityId): Promise<string> {
-    try {
-      const playerId = entityId || this.characterEntityId;
-      const energyTableId =
-        "0x74620000000000000000000000000000456e6572677900000000000000000000";
-      const result = await this.getRecord(energyTableId, [playerId]);
-
-      if (!result.staticData || result.staticData === "0x") {
-        return "0";
-      }
-
-      const energyHex = result.staticData.slice(2);
-      const energy = BigInt("0x" + energyHex.slice(32, 64));
-      return energy.toString();
-    } catch (error) {
-      return "0";
     }
   }
 
@@ -439,5 +317,97 @@ export abstract class DustGameBase {
     console.log(
       "⚠️  Note: System IDs are estimated - may need adjustment for actual deployment"
     );
+  }
+}
+
+export class TransactionMonitor {
+  private pendingTransactions: Map<string, PendingTransaction> = new Map();
+  private isMonitoring = false;
+
+  addTransaction(
+    hash: string,
+    description: string,
+    promise: Promise<ethers.TransactionReceipt>
+  ): void {
+    const pending: PendingTransaction = {
+      hash,
+      description,
+      timestamp: Date.now(),
+      promise,
+    };
+
+    this.pendingTransactions.set(hash, pending);
+
+    // Start monitoring if not already
+    if (!this.isMonitoring) {
+      this.startMonitoring();
+    }
+
+    // Monitor this specific transaction
+    promise
+      .then((receipt) => {
+        if (receipt.status === 1) {
+          console.log(`✅ Background confirmation: ${description} (${hash})`);
+        } else {
+          console.error(`❌ Background failure: ${description} (${hash})`);
+          this.terminateOnFailure(description, hash);
+        }
+        this.pendingTransactions.delete(hash);
+      })
+      .catch((error) => {
+        console.error(`❌ Background error: ${description} (${hash}):`, error);
+        this.terminateOnFailure(description, hash);
+        this.pendingTransactions.delete(hash);
+      });
+  }
+
+  private startMonitoring(): void {
+    this.isMonitoring = true;
+    // We don't need a separate monitoring loop since we handle each transaction individually
+  }
+
+  private terminateOnFailure(description: string, hash: string): void {
+    console.error(`💥 Transaction failed: ${description} (${hash})`);
+    console.error(`💥 Terminating process due to transaction failure`);
+    process.exit(1);
+  }
+
+  getPendingCount(): number {
+    return this.pendingTransactions.size;
+  }
+
+  hasPending(): boolean {
+    return this.pendingTransactions.size > 0;
+  }
+
+  async waitForTransaction(hash: string): Promise<ethers.TransactionReceipt> {
+    const pending = this.pendingTransactions.get(hash);
+
+    if (!pending) {
+      throw new Error(`Transaction ${hash} not found in pending transactions`);
+    }
+
+    try {
+      const receipt = await pending.promise;
+
+      if (receipt.status === 1) {
+        console.log(
+          `✅ Transaction confirmed: ${pending.description} (${hash})`
+        );
+      } else {
+        console.error(
+          `❌ Transaction failed: ${pending.description} (${hash})`
+        );
+        throw new Error(`Transaction failed with status: ${receipt.status}`);
+      }
+
+      return receipt;
+    } catch (error) {
+      console.error(
+        `❌ Transaction error: ${pending.description} (${hash}):`,
+        error
+      );
+      throw error;
+    }
   }
 }
