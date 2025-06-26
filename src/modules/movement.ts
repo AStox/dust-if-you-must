@@ -158,7 +158,7 @@ export class MovementModule extends DustGameBase {
       }
 
       // delay between steps
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      // await new Promise((resolve) => setTimeout(resolve, 100));
     }
     console.log(`✅ Reached target: (${to.x}, ${to.y}, ${to.z})`);
     return;
@@ -277,22 +277,6 @@ export class MovementModule extends DustGameBase {
     this.lastKnownPosition = spawnCoord;
     console.log(
       `📍 Set initial position to spawn coordinate: (${spawnCoord.x}, ${spawnCoord.y}, ${spawnCoord.z})`
-    );
-
-    // 500ms delay before next call
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  // Random spawn character (SpawnSystem)
-  async randomSpawn(extraData: string = "0x"): Promise<void> {
-    console.log(`🎲 Random spawning character`);
-
-    const hash = await this.executeSystemCallNonBlocking(
-      this.SYSTEM_IDS.SPAWN_SYSTEM,
-      "randomSpawn(bytes32,bytes)",
-      [this.characterEntityId, extraData],
-      "Random spawning character",
-      true // Use optimized gas for spawn
     );
 
     // 500ms delay before next call

@@ -1,7 +1,7 @@
 import { DustGameBase } from "../core/base.js";
 import { Vec3 } from "../types.js";
 import { ethers } from "ethers";
-import { ObjectTypes, isPassThroughById } from "../types/objectTypes.js";
+import { ObjectTypes } from "../types/objectTypes.js";
 import { packVec3 } from "../utils.js";
 
 export class WorldModule extends DustGameBase {
@@ -99,14 +99,10 @@ export class WorldModule extends DustGameBase {
     for (let y = startY ?? 100; y >= (startY ?? -54) - 10; y--) {
       try {
         const currentType = await this.getBlockType({ x, y, z });
-        console.log("currentType", currentType);
         const belowType = await this.getBlockType({ x, y: y - 1, z });
-        console.log("belowType", belowType);
-        // const currentType = await this.getObjectTypeAt(x, y, z);
-        // const belowType = await this.getObjectTypeAt(x, y - 1, z);
-        console.log(
-          `[${x}, ${y}, ${z}] Type: ${ObjectTypes[currentType].name}, typeBelow: ${ObjectTypes[belowType].name}`
-        );
+        // console.log(
+        //   `[${x}, ${y}, ${z}] Type: ${ObjectTypes[currentType].name}, typeBelow: ${ObjectTypes[belowType].name}`
+        // );
 
         // Ground level = passable block above solid block
         if (this.isPassThrough(currentType) && !this.isPassThrough(belowType)) {
@@ -122,7 +118,7 @@ export class WorldModule extends DustGameBase {
   }
 
   private isPassThrough(objectType: number): boolean {
-    return isPassThroughById(objectType);
+    return ObjectTypes[objectType].passThrough;
   }
 
   CHUNK_SIZE = 16;
@@ -136,9 +132,15 @@ export class WorldModule extends DustGameBase {
   // Helper: Floor division for negative numbers
   private floorDiv(a: number, b: number): number {
     if (b === 0) throw new Error("Division by zero");
+    // if (a < 0 !== b < 0 && a % b !== 0) {
+    //   return Math.floor(a / b) - 1;
+    // }
+    // return Math.floor(a / b);
+
     if (a < 0 !== b < 0 && a % b !== 0) {
-      return Math.floor(a / b) - 1;
+      return Math.ceil(a / b - 1);
     }
+
     return Math.floor(a / b);
   }
 
@@ -149,11 +151,12 @@ export class WorldModule extends DustGameBase {
 
   // Step 1: Convert voxel to chunk coordinate
   private toChunkCoord(coord: Vec3): Vec3 {
-    return {
+    const chunkCoord = {
       x: this.floorDiv(coord.x, this.CHUNK_SIZE),
       y: this.floorDiv(coord.y, this.CHUNK_SIZE),
       z: this.floorDiv(coord.z, this.CHUNK_SIZE),
     };
+    return chunkCoord;
   }
 
   // Step 3: Get chunk pointer address (CREATE3)
@@ -207,6 +210,11 @@ export class WorldModule extends DustGameBase {
 
   // Full implementation
   public async getBlockType(coord: Vec3): Promise<number> {
+    const blockType = await this.getObjectTypeAt(coord);
+    if (blockType !== 0) {
+      return blockType;
+    }
+
     const worldAddress = this.worldContract.target as string;
     const provider = this.provider;
     // Step 1: Convert to chunk coordinate

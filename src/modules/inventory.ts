@@ -118,7 +118,7 @@ export class InventoryModule extends DustGameBase {
   }
 
   // Get comprehensive inventory summary for debugging
-  async getInventorySummary(): Promise<{ type: number; amount: number }[]> {
+  async getInventory(): Promise<{ type: number; amount: number }[]> {
     // Show all non-empty slots
     const nonEmptySlots: { type: number; amount: number }[] = [];
     for (let slot = 0; slot < 40; slot++) {
@@ -132,5 +132,15 @@ export class InventoryModule extends DustGameBase {
     }
 
     return nonEmptySlots;
+  }
+
+  async getSlotForItemType(itemType: number): Promise<number> {
+    for (let slot = 0; slot < 40; slot++) {
+      const slotContents = await this.getInventorySlot(slot);
+      if (slotContents?.itemType === itemType) {
+        return slot;
+      }
+    }
+    throw new Error(`No slot found for item type ${itemType}`);
   }
 }

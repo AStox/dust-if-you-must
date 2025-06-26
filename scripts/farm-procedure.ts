@@ -4,7 +4,7 @@ import * as dotenv from "dotenv";
 import { DustBot } from "../src/index.js";
 import { Vec3 } from "../src/types.js";
 import { PlayerState } from "../src/core/base.js";
-import { ObjectTypes } from "../src/types/objectTypes.js";
+import { getObjectIdByName, ObjectTypes } from "../src/types/objectTypes.js";
 
 // Load environment variables
 dotenv.config();
@@ -17,13 +17,13 @@ export const DEFAULT_OPERATION_DELAY = 4000; // milliseconds
 async function main() {
   // Initialize the bot
   const bot = new DustBot();
-  const coord = { x: -443, y: 58, z: 489 };
-  console.log(
-    "type:",
-    ObjectTypes[await bot.world.getObjectTypeAt(coord)].name
-  );
-  console.log("type:", ObjectTypes[await bot.world.getBlockType(coord)].name);
-
+  // const coord = { x: -436, y: 65, z: 489 };
+  // console.log(coord);
+  // console.log(
+  //   "type:",
+  //   ObjectTypes[await bot.world.getObjectTypeAt(coord)].name
+  // );
+  // console.log("type:", ObjectTypes[await bot.world.getBlockType(coord)].name);
   // Display wallet info
   const walletInfo = await bot.getInfo();
 
@@ -34,7 +34,6 @@ async function main() {
 
   // Get the actual player state from game tables
   const playerState = await bot.getPlayerState();
-
   let playerReady = false;
 
   switch (playerState) {
@@ -86,7 +85,7 @@ async function main() {
   const farmCenter: Vec3 = { x: -401, y: 72, z: 483 };
   const housePosition: Vec3 = { x: -401, y: 72, z: 489 };
   const farmCorner1: Vec3 = { x: -405, y: 72, z: 479 };
-  const farmCorner2: Vec3 = { x: -298, y: 72, z: 486 };
+  const farmCorner2: Vec3 = { x: -398, y: 72, z: 486 };
 
   if (!playerReady) {
     throw new Error("Character is not ready after state-specific activation");
@@ -94,287 +93,216 @@ async function main() {
   console.log();
 
   // Check current inventory status
-  const inventory = await bot.inventory.getInventorySummary();
+  let inventory = await bot.inventory.getInventory();
   console.log("inventory", inventory);
 
-  // const [emptyBuckets, waterBuckets] = await Promise.all([
-  //   bot.farming.findEmptyBuckets(maxSlots),
-  //   bot.farming.findWaterBuckets(maxSlots),
-  // ]);
+  const walkToCoast = async () => {
+    console.log("=".repeat(60));
+    console.log("🌊 STEP 2: MOVING TO COAST");
+    console.log("=".repeat(60));
+    console.log(
+      `📍 Moving to coast: (${coastPosition.x}, ${coastPosition.y}, ${coastPosition.z})`
+    );
 
-  //   const walkToCoast = async () => {
-  //     console.log("=".repeat(60));
-  //     console.log("🌊 STEP 2: MOVING TO COAST");
-  //     console.log("=".repeat(60));
-  //     console.log(
-  //       `📍 Moving to coast: (${coastPosition.x}, ${coastPosition.y}, ${coastPosition.z})`
-  //     );
+    try {
+      await bot.checkPlayerStatus("Moving to coast");
 
-  //     try {
-  //       await bot.checkPlayerStatus("Moving to coast");
+      await bot.movement.moveTowards(coastPosition);
+      console.log("✅ Reached the coast!");
+    } catch (error) {
+      throw error;
+    }
+  };
 
-  //       await bot.movement.moveTowards(coastPosition);
-  //       console.log("✅ Reached the coast!");
-  //     } catch (error) {
-  //       throw error;
-  //     }
-  //   };
+  const fillBuckets = async () => {
+    console.log("=".repeat(60));
+    console.log("🪣 STEP 3: FILLING BUCKETS WITH WATER");
+    console.log("=".repeat(60));
+    console.log(
+      `🎯 Water source: (${waterPosition.x}, ${waterPosition.y}, ${waterPosition.z})`
+    );
+    inventory = await bot.inventory.getInventory();
+    // Fill empty buckets
+    const emptyBucketSlots = inventory
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.type === getObjectIdByName("Bucket")!)
+      .map(({ index }) => index);
+    console.log("emptyBucketSlots", emptyBucketSlots);
+    for (const emptySlot of emptyBucketSlots) {
+      try {
+        console.log(`🪣 Filling empty bucket in slot ${emptySlot}...`);
+        await bot.farming.fillBucket(waterPosition, emptySlot);
+        console.log(`✅ Successfully filled bucket in slot ${emptySlot}!`);
+      } catch (error) {
+        console.log(`⚠️ Failed to fill bucket in slot ${emptySlot}: ${error}`);
+      }
+    }
+  };
 
-  //   const fillBuckets = async () => {
-  //     console.log("=".repeat(60));
-  //     console.log("🪣 STEP 3: FILLING BUCKETS WITH WATER");
-  //     console.log("=".repeat(60));
-  //     console.log(
-  //       `🎯 Water source: (${waterPosition.x}, ${waterPosition.y}, ${waterPosition.z})`
-  //     );
+  const walkToHouse = async () => {
+    console.log("=".repeat(60));
+    console.log("🏠 STEP 4: TRAVELING TO HOUSE");
+    console.log("=".repeat(60));
+    console.log(
+      `📍 Moving to house: (${housePosition.x}, ${housePosition.y}, ${housePosition.z})`
+    );
 
-  //     // Fill empty buckets
-  //     let bucketsFilled = waterBuckets.length; // Already filled buckets
-  //     for (const emptySlot of emptyBuckets) {
-  //       try {
-  //         await bot.checkPlayerStatus(`Filling bucket slot ${emptySlot}`);
-  //         console.log(`🪣 Filling empty bucket in slot ${emptySlot}...`);
-  //         await bot.farming.fillBucket(waterPosition, emptySlot);
-  //         console.log(`✅ Successfully filled bucket in slot ${emptySlot}!`);
-  //         bucketsFilled++;
+    try {
+      await bot.movement.moveTowards(housePosition);
+      console.log("✅ Reached the house!");
+    } catch (error) {
+      console.error("❌ Failed to reach the house:", error);
+      throw error;
+    }
+  };
 
-  //         // Small delay between bucket fills
-  //         await new Promise((resolve) =>
-  //           setTimeout(resolve, DEFAULT_OPERATION_DELAY)
-  //         );
-  //       } catch (error) {
-  //         console.log(
-  //           `⚠️ Failed to fill bucket in slot ${emptySlot}: ${error}`
-  //         );
-  //       }
-  //     }
+  const walkToFarmCenter = async () => {
+    console.log("=".repeat(60));
+    console.log("🌾 STEP 5: TRAVELING TO FARM CENTER");
+    console.log("=".repeat(60));
+    console.log("🌾 Moving to the farm center...");
+    console.log(
+      `📍 Moving to farm center: (${farmCenter.x}, ${farmCenter.y}, ${farmCenter.z})`
+    );
 
-  //     if (bucketsFilled > 0) {
-  //       console.log(
-  //         `🎉 Found ${bucketsFilled} bucket(s) with water (filled or already filled)!`
-  //       );
-  //     } else {
-  //       console.log(
-  //         "⚠️ No water buckets found - make sure you have buckets in your inventory"
-  //       );
-  //     }
-  //   };
+    try {
+      await bot.checkPlayerStatus("Moving to farm center");
+      await bot.movement.moveTowards(farmCenter);
+      console.log("✅ Reached the farm center!");
+    } catch (error) {
+      console.error("❌ Failed to reach the farm center:", error);
+      throw error;
+    }
+  };
 
-  //   const walkToHouse = async () => {
-  //     console.log("=".repeat(60));
-  //     console.log("🏠 STEP 4: TRAVELING TO HOUSE");
-  //     console.log("=".repeat(60));
-  //     console.log(
-  //       `📍 Moving to house: (${housePosition.x}, ${housePosition.y}, ${housePosition.z})`
-  //     );
+  async function refillBuckets() {
+    await walkToHouse();
+    await walkToCoast();
+    await fillBuckets();
+    await walkToHouse();
+    await walkToFarmCenter();
+  }
 
-  //     try {
-  //       const { position } = await bot.checkPlayerStatus("Moving to house");
-  //       if (position) {
-  //         console.log(
-  //           `🔍 Moving towards: (${housePosition.x}, ${housePosition.y}, ${housePosition.z}) from ${position}`
-  //         );
-  //         await bot.movement.moveTowards(housePosition, position);
-  //       } else {
-  //         throw new Error("❌ Player position is null - stopping operations");
-  //       }
-  //       console.log("✅ Reached the house!");
-  //     } catch (error) {
-  //       console.error("❌ Failed to reach the house:", error);
-  //       throw error;
-  //     }
-  //   };
+  inventory = await bot.inventory.getInventory();
+  const emptyBucketIndexes = inventory
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.type === getObjectIdByName("Bucket")!)
+    .map(({ index }) => index);
+  const emptyBucketCount = emptyBucketIndexes.length;
+  console.log("emptyBucketCount", emptyBucketCount);
 
-  //   const walkToFarmCenter = async () => {
-  //     console.log("=".repeat(60));
-  //     console.log("🌾 STEP 5: TRAVELING TO FARM CENTER");
-  //     console.log("=".repeat(60));
-  //     console.log("🌾 Moving to the farm center...");
-  //     console.log(
-  //       `📍 Moving to farm center: (${farmCenter.x}, ${farmCenter.y}, ${farmCenter.z})`
-  //     );
+  // if (emptyBucketCount > 0) {
+  //   await walkToCoast();
+  //   await fillBuckets();
+  // }
 
-  //     try {
-  //       await bot.checkPlayerStatus("Moving to farm center");
-  //       await bot.movement.moveTowards(farmCenter);
-  //       console.log("✅ Reached the farm center!");
-  //     } catch (error) {
-  //       console.error("❌ Failed to reach the farm center:", error);
-  //       throw error;
-  //     }
-  //   };
+  inventory = await bot.inventory.getInventory();
+  const waterBucketIndexes = inventory
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.type === getObjectIdByName("WaterBucket")!)
+    .map(({ index }) => index);
+  const waterBucketCount = waterBucketIndexes.length;
+  console.log("waterBucketCount", waterBucketCount);
 
-  //   if (emptyBuckets.length > 0) {
-  //     await walkToCoast();
-  //     await fillBuckets();
-  //   }
-
-  //   if (waterBuckets.length === maxSlots) {
-  //     await walkToHouse();
-  //     await walkToFarmCenter();
-  //   }
-
-  //   // Step 5: Water all farm plots
-  //   console.log("=".repeat(60));
-  //   console.log("🚜 STEP 6: WATERING ALL FARM PLOTS");
-  //   console.log("=".repeat(60));
-  //   console.log("💧 Starting to water all farm plots...");
+  // if (waterBucketCount >= 9) {
+  await walkToHouse();
+  await walkToFarmCenter();
+  // }
+  // await walkToFarmCenter();
+  // Step 5: Water all farm plots
+  console.log("=".repeat(60));
+  console.log("🚜 WATERING FARM PLOTS");
+  console.log("=".repeat(60));
 
   //   // Generate all farm plot coordinates between corners
-  //   const farmPlots: Vec3[] = [];
-  //   const minX = Math.min(farmCorner1.x, farmCorner2.x);
-  //   const maxX = Math.max(farmCorner1.x, farmCorner2.x);
-  //   const minZ = Math.min(farmCorner1.z, farmCorner2.z);
-  //   const maxZ = Math.max(farmCorner1.z, farmCorner2.z);
+  const farmPlots: Vec3[] = [];
+  const minX = Math.min(farmCorner1.x, farmCorner2.x);
+  const maxX = Math.max(farmCorner1.x, farmCorner2.x);
+  const minZ = Math.min(farmCorner1.z, farmCorner2.z);
+  const maxZ = Math.max(farmCorner1.z, farmCorner2.z);
 
-  //   for (let x = minX; x <= maxX; x++) {
-  //     for (let z = minZ; z <= maxZ; z++) {
-  //       farmPlots.push({ x, y: 72, z }); // Assuming y=72 for all farm plots
-  //     }
-  //   }
+  for (let x = minX; x <= maxX; x++) {
+    for (let z = minZ; z <= maxZ; z++) {
+      farmPlots.push({ x, y: 72, z }); // Assuming y=72 for all farm plots
+    }
+  }
 
-  //   console.log(`🌾 Found ${farmPlots.length} farm plots to water`);
-  //   console.log(`📏 Farm area: (${minX},${minZ}) to (${maxX},${maxZ})`);
+  console.log(`🌾 Found ${farmPlots.length} farm plots to water`);
+  console.log(`📏 Farm area: (${minX},${minZ}) to (${maxX},${maxZ})`);
 
-  //   let totalPlotsWatered = 0;
-  //   let currentBucketSlot = 0;
-  //   const maxBucketSlots = 10;
+  let totalPlotsWatered = 0;
+  for (const plot of farmPlots) {
+    const type = await bot.world.getBlockType(plot);
+    if (type === getObjectIdByName("WetFarmland")!) {
+      totalPlotsWatered++;
+    }
+  }
 
   //   // Keep watering until all plots are done
-  //   while (totalPlotsWatered < farmPlots.length) {
-  //     console.log(
-  //       `\n🚜 Watering cycle ${
-  //         Math.floor(totalPlotsWatered / maxBucketSlots) + 1
-  //       }`
-  //     );
-  //     console.log(
-  //       `📊 Progress: ${totalPlotsWatered}/${farmPlots.length} plots watered`
-  //     );
+  let plotIndex = 0;
+  while (totalPlotsWatered < farmPlots.length) {
+    console.log(
+      `📊 Progress: ${totalPlotsWatered}/${farmPlots.length} plots watered`
+    );
+    inventory = await bot.inventory.getInventory();
+    const waterBucketIndexes = inventory
+      .map((item, index) => ({ item, index }))
+      .filter(({ item }) => item.type === getObjectIdByName("WaterBucket")!)
+      .map(({ index }) => index);
+    let waterBucketCount = waterBucketIndexes.length;
+    while (waterBucketCount > 0) {
+      const plot = farmPlots[plotIndex];
+      if (
+        (await bot.world.getBlockType(plot)) !== getObjectIdByName("Farmland")!
+      ) {
+        console.log(
+          "plotIndex",
+          plotIndex,
+          farmPlots[plotIndex].x,
+          farmPlots[plotIndex].z
+        );
+        console.log(
+          "blockType",
+          ObjectTypes[await bot.world.getBlockType(plot)].name
+        );
+        console.log("Not farmland");
+        plotIndex++;
+        continue;
+      }
 
-  //     // Water plots with current buckets
-  //     let plotsWateredThisCycle = 0;
-  //     for (
-  //       let bucketSlot = 0;
-  //       bucketSlot < maxBucketSlots &&
-  //       totalPlotsWatered + plotsWateredThisCycle < farmPlots.length;
-  //       bucketSlot++
-  //     ) {
-  //       const plotIndex = totalPlotsWatered + plotsWateredThisCycle;
-  //       const plot = farmPlots[plotIndex];
+      try {
+        await bot.farming.wetFarmland(plot);
+        console.log(
+          `✅ Successfully watered plot at (${plot.x}, ${plot.y}, ${plot.z})`
+        );
+        plotIndex++;
+        waterBucketCount--;
 
-  //       try {
-  //         await bot.checkPlayerStatus(
-  //           `Water plot ${plotIndex + 1}/${farmPlots.length} at (${plot.x},${
-  //             plot.y
-  //           },${plot.z})`
-  //         );
+        // Small delay between watering
+        await new Promise((resolve) =>
+          setTimeout(resolve, DEFAULT_OPERATION_DELAY)
+        );
+      } catch (error) {
+        console.log(
+          `⚠️ Failed to water plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
+        );
+        // Break out of bucket loop - need to refill
+        break;
+      }
+    }
 
-  //         console.log(
-  //           `💧 Watering plot ${plotIndex + 1}/${farmPlots.length} at (${
-  //             plot.x
-  //           }, ${plot.y}, ${plot.z}) with bucket from slot ${bucketSlot}`
-  //         );
-  //         await bot.farming.wetFarmland(plot, bucketSlot);
-  //         console.log(
-  //           `✅ Successfully watered plot at (${plot.x}, ${plot.y}, ${plot.z})`
-  //         );
-  //         plotsWateredThisCycle++;
+    // If we haven't finished all plots, go refill buckets
+    if (totalPlotsWatered < farmPlots.length) {
+      console.log("\n" + "=".repeat(50));
+      console.log("🔄 REFILL CYCLE: RETURNING TO COAST");
+      console.log("=".repeat(50));
+      console.log(
+        "🪣 Buckets empty or used up - returning to coast to refill..."
+      );
 
-  //         // Small delay between watering
-  //         await new Promise((resolve) =>
-  //           setTimeout(resolve, DEFAULT_OPERATION_DELAY)
-  //         );
-  //       } catch (error) {
-  //         console.log(
-  //           `⚠️ Failed to water plot at (${plot.x}, ${plot.y}, ${plot.z}) - bucket slot ${bucketSlot} might be empty or used up`
-  //         );
-  //         // Break out of bucket loop - need to refill
-  //         break;
-  //       }
-  //     }
-
-  //     totalPlotsWatered += plotsWateredThisCycle;
-  //     console.log(
-  //       `✅ Watered ${plotsWateredThisCycle} plots this cycle. Total: ${totalPlotsWatered}/${farmPlots.length}`
-  //     );
-
-  //     // If we haven't finished all plots, go refill buckets
-  //     if (totalPlotsWatered < farmPlots.length) {
-  //       console.log("\n" + "=".repeat(50));
-  //       console.log("🔄 REFILL CYCLE: RETURNING TO COAST");
-  //       console.log("=".repeat(50));
-  //       console.log(
-  //         "🪣 Buckets empty or used up - returning to coast to refill..."
-  //       );
-
-  //       // Return to coast
-  //       console.log(
-  //         `📍 Returning to coast: (${coastPosition.x}, ${coastPosition.y}, ${coastPosition.z})`
-  //       );
-  //       try {
-  //         await bot.checkPlayerStatus("Returning to coast");
-  //         await bot.movement.moveTowards(coastPosition);
-  //         console.log("✅ Back at the coast!");
-  //       } catch (error) {
-  //         console.error("❌ Failed to return to coast:", error);
-  //         throw error;
-  //       }
-
-  //       // Refill all buckets
-  //       console.log("💧 Refilling buckets with water...");
-  //       await bot.farming.getInventorySummary(maxBucketSlots);
-
-  //       const [refillEmptyBuckets, refillWaterBuckets] = await Promise.all([
-  //         bot.farming.findEmptyBuckets(maxBucketSlots),
-  //         bot.farming.findWaterBuckets(maxBucketSlots),
-  //       ]);
-
-  //       // Fill only the empty buckets
-  //       for (const emptySlot of refillEmptyBuckets) {
-  //         try {
-  //           await bot.checkPlayerStatus(`Refilling slot ${emptySlot}`);
-  //           console.log(`🪣 Refilling empty bucket in slot ${emptySlot}...`);
-  //           await bot.farming.fillBucket(waterPosition, emptySlot);
-  //           console.log(`✅ Refilled bucket in slot ${emptySlot}!`);
-  //           await new Promise((resolve) => setTimeout(resolve, 1000));
-  //         } catch (error) {
-  //           console.log(
-  //             `⚠️ Failed to refill bucket in slot ${emptySlot}: ${error}`
-  //           );
-  //         }
-  //       }
-
-  //       const totalWaterBuckets =
-  //         refillWaterBuckets.length + refillEmptyBuckets.length;
-  //       console.log(
-  //         `🎉 Ready with ${totalWaterBuckets} water bucket(s) (${refillWaterBuckets.length} already filled + ${refillEmptyBuckets.length} refilled)!`
-  //       );
-
-  //       // Return to farm center via house
-  //       console.log("\n" + "=".repeat(50));
-  //       console.log("🔄 REFILL CYCLE: RETURNING TO FARM");
-  //       console.log("=".repeat(50));
-  //       console.log("🏠 Returning to house...");
-  //       try {
-  //         await bot.checkPlayerStatus("Returning to house");
-  //         await bot.movement.moveTowards(housePosition);
-  //         console.log("✅ Back at house!");
-  //       } catch (error) {
-  //         console.error("❌ Failed to return to house:", error);
-  //         throw error;
-  //       }
-
-  //       console.log("🌾 Returning to farm center...");
-  //       try {
-  //         await bot.checkPlayerStatus("Returning to farm");
-  //         await bot.movement.moveTowards(farmCenter);
-  //         console.log("✅ Back at farm center!");
-  //       } catch (error) {
-  //         console.error("❌ Failed to return to farm center:", error);
-  //         throw error;
-  //       }
-  //     }
-  //   }
+      await refillBuckets();
+    }
+  }
 
   //   console.log("\n" + "=".repeat(60));
   //   console.log("🎉 FARMING PROCEDURE COMPLETE!");
