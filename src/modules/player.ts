@@ -7,54 +7,55 @@ export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
 
   async checkStatusAndActivate(bot: DustBot): Promise<void> {
-  const playerState = await bot.getPlayerState();
-  let playerReady = false;
+    const playerState = await bot.getPlayerState();
+    let playerReady = false;
 
-  switch (playerState) {
-    case PlayerState.DEAD:
-      console.log("💀 Player is DEAD - spawning character...");
-      const spawnTilePosition = {
-        x: -400,
-        y: 73,
-        z: 492,
-      };
+    switch (playerState) {
+      case PlayerState.DEAD:
+        console.log("💀 Player is DEAD - spawning character...");
+        const spawnTilePosition = {
+          x: -400,
+          y: 73,
+          z: 492,
+        };
 
-      try {
-        const hash = await bot.movement.spawn(
-          process.env.SPAWN_TILE_ENTITY_ID!,
-          spawnTilePosition,
-          245280000000000000n
-        );
-        console.log("🎉 Character spawned successfully!");
+        try {
+          const hash = await bot.movement.spawn(
+            process.env.SPAWN_TILE_ENTITY_ID!,
+            spawnTilePosition,
+            245280000000000000n
+          );
+          console.log("🎉 Character spawned successfully!");
+          playerReady = true;
+        } catch (error) {
+          console.error("❌ Failed to spawn character:", error);
+          throw new Error("Could not spawn dead character");
+        }
+        break;
+
+      case PlayerState.SLEEPING:
+        console.log("😴 Player is SLEEPING - waking them up...");
+        try {
+          await bot.player.activatePlayer();
+          console.log("✅ Player woken up successfully!");
+          playerReady = true;
+        } catch (error) {
+          console.error("❌ Failed to wake sleeping player:", error);
+          throw new Error("Could not wake sleeping character");
+        }
+        break;
+
+      case PlayerState.AWAKE:
         playerReady = true;
-      } catch (error) {
-        console.error("❌ Failed to spawn character:", error);
-        throw new Error("Could not spawn dead character");
-      }
-      break;
+        break;
 
-    case PlayerState.SLEEPING:
-      console.log("😴 Player is SLEEPING - waking them up...");
-      try {
-        await bot.player.activatePlayer();
-        console.log("✅ Player woken up successfully!");
-        playerReady = true;
-      } catch (error) {
-        console.error("❌ Failed to wake sleeping player:", error);
-        throw new Error("Could not wake sleeping character");
-      }
-      break;
+      default:
+        throw new Error(`Unknown player state: ${playerState}`);
+    }
 
-    case PlayerState.AWAKE:
-      playerReady = true;
-      break;
-
-    default:
-      throw new Error(`Unknown player state: ${playerState}`);
-  }
-
-  if (!playerReady) {
-    throw new Error("Character is not ready after state-specific activation");
+    if (!playerReady) {
+      throw new Error("Character is not ready after state-specific activation");
+    }
   }
 
   // Wake up/activate the character
