@@ -94,12 +94,24 @@ export class WorldModule extends DustGameBase {
     }
   }
 
-  async getGroundLevel(x: number, z: number, startY?: number): Promise<number> {
+  async getGroundLevel(x: number, z: number, startY: number): Promise<number> {
+    const cache = new Map<string, number>();
+    const getCachedBlockType = async (coord: Vec3): Promise<number> => {
+      const key = `${coord.x},${coord.y},${coord.z}`;
+      if (cache.has(key)) {
+        return cache.get(key)!;
+      }
+      const blockType = await this.getBlockType(coord);
+      cache.set(key, blockType);
+      return blockType;
+    };
+
     // Scan from top to bottom to find ground level
-    for (let y = startY ?? 100; y >= (startY ?? -54) - 10; y--) {
+    for (let y = startY; y >= -100; y--) {
       try {
-        const currentType = await this.getBlockType({ x, y, z });
-        const belowType = await this.getBlockType({ x, y: y - 1, z });
+        const currentType = await getCachedBlockType({ x, y, z });
+        const belowType = await getCachedBlockType({ x, y: y - 1, z });
+
         // console.log(
         //   `[${x}, ${y}, ${z}] Type: ${ObjectTypes[currentType].name}, typeBelow: ${ObjectTypes[belowType].name}`
         // );
@@ -184,7 +196,6 @@ export class WorldModule extends DustGameBase {
     return "0x" + ethers.keccak256(rlpEncoded).slice(-40);
   }
 
-  // Step 5: Calculate block index within chunk
   private getBlockIndex(coord: Vec3): number {
     // Get position relative to chunk origin
     const relativeCoord: Vec3 = {

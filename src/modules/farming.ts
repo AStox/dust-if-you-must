@@ -22,7 +22,7 @@ export class FarmingModule extends DustGameBase {
       `💧 Filling bucket at (${coord.x}, ${coord.y}, ${coord.z}) from slot ${slot}`
     );
 
-    await this.executeSystemCall(
+    await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.BUCKET_SYSTEM,
       "fillBucket(bytes32,uint96,uint16)",
       [this.characterEntityId, packVec3(coord), slot],
@@ -43,7 +43,7 @@ export class FarmingModule extends DustGameBase {
       `🌾 Watering farmland at (${coord.x}, ${coord.y}, ${coord.z}) with bucket from slot ${bucketSlot}`
     );
 
-    await this.executeSystemCall(
+    await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.BUCKET_SYSTEM,
       "wetFarmland(bytes32,uint96,uint16)",
       [this.characterEntityId, packVec3(coord), bucketSlot],
@@ -87,12 +87,7 @@ export class FarmingModule extends DustGameBase {
     await this.executeSystemCall(
       this.SYSTEM_IDS.FARMING_SYSTEM,
       "plant(bytes32,uint96,uint16,bytes)",
-      [
-        this.characterEntityId,
-        packVec3(coord),
-        seedSlot,
-        "0x", // empty extraData
-      ],
+      [this.characterEntityId, packVec3(coord), seedSlot],
       "Planting seeds"
     );
   }
@@ -110,25 +105,9 @@ export class FarmingModule extends DustGameBase {
     await this.executeSystemCall(
       this.SYSTEM_IDS.FARMING_SYSTEM,
       "harvest(bytes32,uint96,uint16,bytes)",
-      [
-        this.characterEntityId,
-        packVec3(coord),
-        toolSlot,
-        "0x", // empty extraData
-      ],
+      [this.characterEntityId, packVec3(coord), toolSlot],
       "Harvesting crops"
     );
-  }
-
-  // Check if farmland is watered (would need actual game state reading)
-  async isFarmlandWatered(coord: Vec3): Promise<boolean> {
-    console.log(
-      "🔍 Farmland state checking not implemented yet - need to read from game tables"
-    );
-    console.log(
-      `🎯 Checking farmland at: (${coord.x}, ${coord.y}, ${coord.z})`
-    );
-    return false; // Placeholder
   }
 
   // Check crop growth stage (would need actual game state reading)

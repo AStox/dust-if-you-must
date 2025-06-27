@@ -1,5 +1,5 @@
 import { DustGameBase, TransactionMonitor } from "../core/base.js";
-import { Vec3, ObjectType } from "../types.js";
+import { Vec3 } from "../types.js";
 import { packVec3, isValidCoordinate } from "../utils.js";
 import {
   withRetry,
@@ -12,88 +12,8 @@ import { WorldModule } from "./world.js";
 
 export class MovementModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
-  private txMonitor = new TransactionMonitor();
   private player = new PlayerModule();
   private world = new WorldModule();
-
-  // Non-blocking system call execution
-  private async executeSystemCallNonBlocking(
-    systemId: string,
-    functionSig: string,
-    params: any[],
-    description: string,
-    useOptimizedGas: boolean = true
-  ): Promise<string> {
-    if (functionSig !== "move(bytes32,uint96[])") {
-      console.log(`📋 Function: ${functionSig}`);
-      console.log(
-        `📦 Parameters:`,
-        params.map(
-          (p, i) =>
-            `  ${i}: ${
-              typeof p === "string" && p.length > 50
-                ? p.slice(0, 50) + "..."
-                : p
-            }`
-        )
-      );
-    }
-
-    try {
-      // Encode the function call data
-      const callData = this.encodeCall(functionSig, params);
-
-      // Use optimized gas settings for Redstone chain
-      let gasLimit: bigint;
-      let maxFeePerGas: bigint;
-      let maxPriorityFeePerGas: bigint;
-
-      gasLimit = BigInt(process.env.GAS_LIMIT || "200000");
-      maxFeePerGas = ethers.parseUnits("0.000002", "gwei");
-      maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei");
-
-      // Call the system through the World contract
-      const tx = await this.worldContract.call(systemId, callData, {
-        gasLimit: gasLimit,
-        maxFeePerGas: maxFeePerGas,
-        maxPriorityFeePerGas: maxPriorityFeePerGas,
-        value: 0,
-      });
-
-      console.log(`🔄 Transaction sent: ${tx.hash} (${description})`);
-
-      // For movement transactions, monitor silently without terminating on failure
-      if (functionSig === "move(bytes32,uint96[])") {
-        // Monitor movement transactions silently - don't terminate on failure
-        const receiptPromise = tx.wait(1);
-        receiptPromise
-          .then((receipt: ethers.TransactionReceipt) => {
-            if (receipt.status === 1) {
-              console.log(`✅ Movement confirmed: ${description} (${tx.hash})`);
-            } else {
-              console.log(
-                `⚠️ Movement failed, triggering retry: ${description} (${tx.hash})`
-              );
-            }
-          })
-          .catch((error: any) => {
-            console.log(
-              `⚠️ Movement error, triggering retry: ${description} (${tx.hash}):`,
-              error
-            );
-          });
-      } else {
-        // Add non-movement transactions to monitoring with termination
-        const receiptPromise = tx.wait(1);
-        this.txMonitor.addTransaction(tx.hash, description, receiptPromise);
-      }
-
-      return tx.hash;
-    } catch (error) {
-      console.error(`❌ Failed to send transaction: ${description}:`, error);
-      throw error;
-    }
-  }
 
   // Move from current position towards a target position
   async moveTowards(to: Vec3): Promise<void> {
@@ -101,14 +21,18 @@ export class MovementModule extends DustGameBase {
       throw new Error(`Invalid to coordinate: ${JSON.stringify(to)}`);
     }
 
+    console.log("getting current position");
     // Get fresh current position for this attempt
     const from = await this.player.getCurrentPosition();
     if (!from) {
       throw new Error("Cannot determine current position");
     }
+    console.log("current position", from);
 
+    console.log("calculating total steps");
     // Calculate total steps needed (using Chebyshev distance)
     const totalSteps = this.calculateChebyshevDistance(from, to);
+    console.log("total steps", totalSteps);
 
     // Move step by step, recalculating path from actual position each time
     let currentPos = from;
@@ -121,8 +45,10 @@ export class MovementModule extends DustGameBase {
     ) {
       stepIndex++;
 
+      console.log("calculating next step");
       // Calculate next step using ground level detection
       const step = await this.calculateNextStep(currentPos, to);
+      console.log("next step", step);
 
       console.log(
         `🔍 Step ${stepIndex}/${totalSteps} 📍 Bot position: (${
@@ -132,13 +58,16 @@ export class MovementModule extends DustGameBase {
         }) -> (${step.x}, ${step.y}, ${step.z})`
       );
 
+      console.log("calculating distance");
       const distance = this.calculateChebyshevDistance(currentPos, step);
+      console.log("distance", distance);
       if (distance > 1) {
         console.log(
           `   ⚠️  ERROR: Distance > 1, this should not happen in step generation!`
         );
       }
 
+      console.log("sending transaction");
       // Send transaction without waiting for confirmation
       await this.executeSystemCallNonBlocking(
         this.SYSTEM_IDS.MOVE_SYSTEM,
@@ -146,6 +75,7 @@ export class MovementModule extends DustGameBase {
         [this.characterEntityId, [packVec3(step)]],
         `Moving to (${step.x}, ${step.y}, ${step.z})`
       );
+      console.log("sent transaction");
 
       // Use intended position for tracking since transaction hasn't confirmed yet
       // The actual position will be updated by the game but we don't wait for it
@@ -231,13 +161,17 @@ export class MovementModule extends DustGameBase {
     else if (currentPos.z > target.z) step.z--;
 
     try {
+      console.log("getting ground level");
       const groundLevel = await this.world.getGroundLevel(
         step.x,
         step.z,
         step.y + 2
       );
+      console.log("ground level", groundLevel);
       step.y = groundLevel;
     } catch (error) {
+      // If we get an error, wait 2 seconds for blocks to be processed, get latest position and set y to 1 above it
+      console.log("error getting ground level, waiting 2 seconds");
       await new Promise((resolve) => setTimeout(resolve, 2000));
       const latestPos = await this.player.getCurrentPosition();
       step.y = latestPos?.y + 1;

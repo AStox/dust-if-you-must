@@ -76,6 +76,85 @@ export abstract class DustGameBase {
     );
   }
 
+  private txMonitor = new TransactionMonitor();
+
+  // Non-blocking system call execution
+  protected async executeSystemCallNonBlocking(
+    systemId: string,
+    functionSig: string,
+    params: any[],
+    description: string
+  ): Promise<string> {
+    if (functionSig !== "move(bytes32,uint96[])") {
+      console.log(`📋 Function: ${functionSig}`);
+      console.log(
+        `📦 Parameters:`,
+        params.map(
+          (p, i) =>
+            `  ${i}: ${
+              typeof p === "string" && p.length > 50
+                ? p.slice(0, 50) + "..."
+                : p
+            }`
+        )
+      );
+    }
+
+    try {
+      // Encode the function call data
+      const callData = this.encodeCall(functionSig, params);
+
+      // Use optimized gas settings for Redstone chain
+      let gasLimit: bigint;
+      let maxFeePerGas: bigint;
+      let maxPriorityFeePerGas: bigint;
+
+      gasLimit = BigInt(process.env.GAS_LIMIT || "200000");
+      maxFeePerGas = ethers.parseUnits("0.000002", "gwei");
+      maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei");
+
+      // Call the system through the World contract
+      const tx = await this.worldContract.call(systemId, callData, {
+        gasLimit: gasLimit,
+        maxFeePerGas: maxFeePerGas,
+        maxPriorityFeePerGas: maxPriorityFeePerGas,
+        value: 0,
+      });
+
+      console.log(`🔄 Transaction sent: ${tx.hash} (${description})`);
+
+      // For movement transactions, monitor silently without terminating on failure
+      if (functionSig === "move(bytes32,uint96[])") {
+        // Monitor movement transactions silently - don't terminate on failure
+        const receiptPromise = tx.wait(1);
+        receiptPromise
+          .then((receipt: ethers.TransactionReceipt) => {
+            if (receipt.status === 1) {
+              console.log(`✅ Movement confirmed: ${description} (${tx.hash})`);
+            } else {
+              console.log(
+                `⚠️ Movement failed, triggering retry: ${description} (${tx.hash})`
+              );
+            }
+          })
+          .catch((error: any) => {
+            console.log(
+              `⚠️ Movement error, triggering retry: ${description} (${tx.hash}):`,
+              error
+            );
+          });
+      } else {
+        // Add non-movement transactions to monitoring with termination
+        const receiptPromise = tx.wait(1);
+        this.txMonitor.addTransaction(tx.hash, description, receiptPromise);
+      }
+
+      return tx.hash;
+    } catch (error) {
+      console.error(`❌ Failed to send transaction: ${description}:`, error);
+      throw error;
+    }
+  }
   // Execute a system call using the new MUD pattern
   protected async executeSystemCall(
     systemId: string,
@@ -226,68 +305,6 @@ export abstract class DustGameBase {
   }
 
   // Check if player is dead (Energy = 0)
-  async isPlayerDead(entityId?: EntityId): Promise<boolean> {
-    try {
-      const playerId = entityId || this.characterEntityId;
-      // Energy table ID: "Energy" -> hex encoded (WorldResourceIdLib format)
-      const energyTableId =
-        "0x74620000000000000000000000000000456e6572677900000000000000000000";
-
-      const result = await this.getRecord(energyTableId, [playerId]);
-
-      if (!result.staticData || result.staticData === "0x") {
-        console.log("⚠️ No energy data found - player might be dead");
-        return true; // No energy data usually means dead
-      }
-
-      // Energy is stored as uint128 (16 bytes)
-      const energyHex = result.staticData.slice(2);
-
-      // Parse energy as big integer
-      const energy = BigInt("0x" + energyHex.slice(33, 64));
-
-      return energy === 0n;
-    } catch (error) {
-      console.log("⚠️ Failed to check player energy:", error);
-      return true; // Assume dead if we can't check
-    }
-  }
-
-  // Check if player is sleeping (has bed assigned)
-  async isPlayerSleeping(entityId?: EntityId): Promise<boolean> {
-    try {
-      const playerId = entityId || this.characterEntityId;
-      // PlayerBed table ID: "PlayerBed" -> hex encoded (WorldResourceIdLib format)
-      const playerBedTableId =
-        "0x74620000000000000000000000000000506c6179657242656400000000000000";
-
-      const result = await this.getRecord(playerBedTableId, [playerId]);
-
-      if (!result.staticData || result.staticData === "0x") {
-        console.log("😴 No bed data found - player is not sleeping");
-        return false;
-      }
-
-      // Check if bed entity ID exists (non-zero)
-      const bedHex = result.staticData.slice(2);
-      if (bedHex.length < 64) {
-        // 32 bytes = 64 hex chars for EntityId
-        return false;
-      }
-
-      const bedEntityId = "0x" + bedHex.slice(0, 64);
-      const isAssigned = bedEntityId !== "0x" + "0".repeat(64);
-
-      if (isAssigned) {
-        console.log(`😴 Player is sleeping in bed: ${bedEntityId}`);
-      }
-
-      return isAssigned;
-    } catch (error) {
-      console.log("⚠️ Failed to check player bed status:", error);
-      return false; // Assume not sleeping if we can't check
-    }
-  }
 
   // Get wallet info
   async getWalletInfo() {

@@ -6,6 +6,57 @@ import { ethers } from "ethers";
 export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
 
+  async checkStatusAndActivate(bot: DustBot): Promise<void> {
+  const playerState = await bot.getPlayerState();
+  let playerReady = false;
+
+  switch (playerState) {
+    case PlayerState.DEAD:
+      console.log("💀 Player is DEAD - spawning character...");
+      const spawnTilePosition = {
+        x: -400,
+        y: 73,
+        z: 492,
+      };
+
+      try {
+        const hash = await bot.movement.spawn(
+          process.env.SPAWN_TILE_ENTITY_ID!,
+          spawnTilePosition,
+          245280000000000000n
+        );
+        console.log("🎉 Character spawned successfully!");
+        playerReady = true;
+      } catch (error) {
+        console.error("❌ Failed to spawn character:", error);
+        throw new Error("Could not spawn dead character");
+      }
+      break;
+
+    case PlayerState.SLEEPING:
+      console.log("😴 Player is SLEEPING - waking them up...");
+      try {
+        await bot.player.activatePlayer();
+        console.log("✅ Player woken up successfully!");
+        playerReady = true;
+      } catch (error) {
+        console.error("❌ Failed to wake sleeping player:", error);
+        throw new Error("Could not wake sleeping character");
+      }
+      break;
+
+    case PlayerState.AWAKE:
+      playerReady = true;
+      break;
+
+    default:
+      throw new Error(`Unknown player state: ${playerState}`);
+  }
+
+  if (!playerReady) {
+    throw new Error("Character is not ready after state-specific activation");
+  }
+
   // Wake up/activate the character
   async activate(): Promise<void> {
     const hash = await this.executeSystemCall(
@@ -35,7 +86,7 @@ export class PlayerModule extends DustGameBase {
     bot: DustBot,
     action: string
   ): Promise<{
-    position: Vec3 | null;
+    position: Vec3;
     energy: string;
     isDead: boolean;
     isSleeping: boolean;
@@ -72,8 +123,54 @@ export class PlayerModule extends DustGameBase {
     }
   }
 
+  async isPlayerDead(entityId?: EntityId): Promise<boolean> {
+    try {
+      const energy = await this.getPlayerEnergy(entityId);
+      return energy === "0";
+    } catch (error) {
+      throw error;
+    }
+  }
+
+  // Check if player is sleeping (has bed assigned)
+  async isPlayerSleeping(entityId?: EntityId): Promise<boolean> {
+    try {
+      const playerId = entityId || this.characterEntityId;
+      // PlayerBed table ID: "PlayerBed" -> hex encoded (WorldResourceIdLib format)
+      const playerBedTableId =
+        "0x74620000000000000000000000000000506c6179657242656400000000000000";
+
+      const result = await this.getRecord(playerBedTableId, [playerId]);
+
+      if (!result.staticData || result.staticData === "0x") {
+        console.log("😴 No bed data found - player is not sleeping");
+        return false;
+      }
+
+      // Check if bed entity ID exists (non-zero)
+      const bedHex = result.staticData.slice(2);
+      if (bedHex.length < 64) {
+        // 32 bytes = 64 hex chars for EntityId
+        return false;
+      }
+
+      const bedEntityId = "0x" + bedHex.slice(0, 64);
+      const isAssigned = bedEntityId !== "0x" + "0".repeat(64);
+
+      if (isAssigned) {
+        console.log(`😴 Player is sleeping in bed: ${bedEntityId}`);
+      }
+
+      return isAssigned;
+    } catch (error) {
+      console.log("⚠️ Failed to check player bed status:", error);
+      return false; // Assume not sleeping if we can't check
+    }
+  }
+
   // Get comprehensive player state
   async getPlayerState(entityId?: EntityId): Promise<PlayerState> {
+    await this.activate();
     const playerId = entityId || this.characterEntityId;
 
     console.log(`🔍 Checking state for player: ${playerId}`);
@@ -103,7 +200,6 @@ export class PlayerModule extends DustGameBase {
       const energyTableId =
         "0x74620000000000000000000000000000456e6572677900000000000000000000";
       const result = await this.getRecord(energyTableId, [playerId]);
-
       if (!result.staticData || result.staticData === "0x") {
         return "0";
       }
@@ -117,7 +213,7 @@ export class PlayerModule extends DustGameBase {
   }
 
   // Get current character position (would need actual game state reading)
-  async getCurrentPosition(): Promise<Vec3 | null> {
+  async getCurrentPosition(): Promise<Vec3> {
     try {
       // EntityPosition table ID - this is likely how it's encoded in the Dust game
       // ResourceId format: bytes32 with encoded type and table name
@@ -130,8 +226,7 @@ export class PlayerModule extends DustGameBase {
       ]);
 
       if (!result.staticData || result.staticData === "0x") {
-        console.log("📍 No position data found for character");
-        return null;
+        throw new Error("📍 No position data found for character");
       }
 
       // Decode position data from staticData
@@ -140,8 +235,7 @@ export class PlayerModule extends DustGameBase {
 
       if (staticData.length < 26) {
         // 0x + 24 hex chars (12 bytes)
-        console.log("📍 Invalid position data length");
-        return null;
+        throw new Error("📍 Invalid position data length");
       }
 
       // Extract x, y, z as int32 values (4 bytes each)
@@ -162,7 +256,7 @@ export class PlayerModule extends DustGameBase {
       return position;
     } catch (error) {
       console.log("📍 Failed to read position from game state:", error);
-      return null;
+      throw error;
     }
   }
 
