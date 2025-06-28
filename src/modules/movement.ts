@@ -45,7 +45,6 @@ export class MovementModule extends DustGameBase {
     ) {
       stepIndex++;
 
-      console.log("calculating next step");
       // Calculate next step using ground level detection
       const step = await this.calculateNextStep(currentPos, to);
       console.log("next step", step);
@@ -73,7 +72,7 @@ export class MovementModule extends DustGameBase {
         this.SYSTEM_IDS.MOVE_SYSTEM,
         "move(bytes32,uint96[])",
         [this.characterEntityId, [packVec3(step)]],
-        `Moving to (${step.x}, ${step.y}, ${step.z})`
+        `Moving to (${step.x}, ${step.y}, ${step.z} from ${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
       );
       console.log("sent transaction");
 
@@ -212,8 +211,5 @@ export class MovementModule extends DustGameBase {
     console.log(
       `📍 Set initial position to spawn coordinate: (${spawnCoord.x}, ${spawnCoord.y}, ${spawnCoord.z})`
     );
-
-    // 500ms delay before next call
-    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 }

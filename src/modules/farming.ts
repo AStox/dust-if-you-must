@@ -63,13 +63,8 @@ export class FarmingModule extends DustGameBase {
 
     await this.executeSystemCall(
       this.SYSTEM_IDS.FARMING_SYSTEM,
-      "till(bytes32,uint96,uint16,bytes)",
-      [
-        this.characterEntityId,
-        packVec3(coord),
-        toolSlot,
-        "0x", // empty extraData
-      ],
+      "till(bytes32,uint96,uint16)",
+      [this.characterEntityId, packVec3(coord), toolSlot],
       "Tilling farmland"
     );
   }
@@ -84,38 +79,40 @@ export class FarmingModule extends DustGameBase {
       `🌱 Planting seeds at (${coord.x}, ${coord.y}, ${coord.z}) from slot ${seedSlot}`
     );
 
-    await this.executeSystemCall(
-      this.SYSTEM_IDS.FARMING_SYSTEM,
-      "plant(bytes32,uint96,uint16,bytes)",
-      [this.characterEntityId, packVec3(coord), seedSlot],
+    await this.executeSystemCallNonBlocking(
+      this.SYSTEM_IDS.BUILD_SYSTEM,
+      "build(bytes32,uint96,uint16,bytes)",
+      [
+        this.characterEntityId,
+        packVec3({ x: coord.x, y: coord.y + 1, z: coord.z }),
+        seedSlot,
+        "0x",
+      ],
       "Planting seeds"
     );
   }
 
+  async plantSeedType(coord: Vec3, seedType: number): Promise<void> {
+    const seedSlot = await this.inventory.getSlotForItemType(seedType);
+    if (seedSlot === -1) {
+      throw new Error(`Seed type ${seedType} not found in inventory`);
+    }
+    await this.plant(coord, seedSlot);
+  }
+
   // Harvest crops (if this function exists in the game - may need different system)
-  async harvest(coord: Vec3, toolSlot: number = 0): Promise<void> {
+  async harvest(coord: Vec3): Promise<void> {
     if (!isValidCoordinate(coord)) {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
     }
 
-    console.log(
-      `🚜 Harvesting at (${coord.x}, ${coord.y}, ${coord.z}) with tool from slot ${toolSlot}`
-    );
+    console.log(`🚜 Harvesting at (${coord.x}, ${coord.y}, ${coord.z})`);
 
-    await this.executeSystemCall(
-      this.SYSTEM_IDS.FARMING_SYSTEM,
-      "harvest(bytes32,uint96,uint16,bytes)",
-      [this.characterEntityId, packVec3(coord), toolSlot],
+    await this.executeSystemCallNonBlocking(
+      this.SYSTEM_IDS.BUILD_SYSTEM,
+      "mineUntilDestroyed(bytes32,uint96,bytes)",
+      [this.characterEntityId, packVec3(coord), "0x"],
       "Harvesting crops"
     );
-  }
-
-  // Check crop growth stage (would need actual game state reading)
-  async getCropGrowthStage(coord: Vec3): Promise<number> {
-    console.log(
-      "🔍 Crop growth checking not implemented yet - need to read from game tables"
-    );
-    console.log(`🎯 Checking crops at: (${coord.x}, ${coord.y}, ${coord.z})`);
-    return 0; // Placeholder
   }
 }

@@ -22,7 +22,7 @@ export abstract class DustGameBase {
   protected provider: ethers.JsonRpcProvider;
   protected wallet: ethers.Wallet;
   protected worldContract: ethers.Contract;
-  protected characterEntityId: EntityId;
+  public characterEntityId: EntityId;
 
   // MUD System IDs - based on actual Dust game systems
   protected readonly SYSTEM_IDS = {
@@ -43,6 +43,8 @@ export abstract class DustGameBase {
       "0x73790000000000000000000000000000437261667453797374656d0000000000",
     SPAWN_SYSTEM:
       "0x73790000000000000000000000000000537061776e53797374656d0000000000",
+    INVENTORY_SYSTEM:
+      "0x73790000000000000000000000000000496e76656e746f727953797374656d00",
   };
 
   constructor() {
@@ -85,21 +87,6 @@ export abstract class DustGameBase {
     params: any[],
     description: string
   ): Promise<string> {
-    if (functionSig !== "move(bytes32,uint96[])") {
-      console.log(`📋 Function: ${functionSig}`);
-      console.log(
-        `📦 Parameters:`,
-        params.map(
-          (p, i) =>
-            `  ${i}: ${
-              typeof p === "string" && p.length > 50
-                ? p.slice(0, 50) + "..."
-                : p
-            }`
-        )
-      );
-    }
-
     try {
       // Encode the function call data
       const callData = this.encodeCall(functionSig, params);

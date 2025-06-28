@@ -66,9 +66,6 @@ export class PlayerModule extends DustGameBase {
       [this.characterEntityId],
       "Activating character"
     );
-
-    // 500ms delay before next call
-    await new Promise((resolve) => setTimeout(resolve, 500));
   }
 
   // Alternative activation method
@@ -79,9 +76,6 @@ export class PlayerModule extends DustGameBase {
       [this.characterEntityId],
       "Activating player"
     );
-
-    // 500ms delay before next call
-    await new Promise((resolve) => setTimeout(resolve, 500));
   }
   async checkPlayerStatus(
     bot: DustBot,

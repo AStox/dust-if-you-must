@@ -12,66 +12,35 @@ export interface Recipe {
 
 export class CraftingModule extends DustGameBase {
   // Predefined common recipes (these may need to be updated based on actual game recipes)
-  private commonRecipes: Record<string, Recipe> = {
-    WOODEN_PICKAXE: {
-      id: "0x1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
-      name: "Wooden Pickaxe",
-      inputs: [
-        { slot: 0, amount: 3 }, // wood planks
-        { slot: 1, amount: 2 }, // sticks
-      ],
-      description: "Basic mining tool",
-    },
-    WOODEN_SHOVEL: {
-      id: "0x2345678901abcdef2345678901abcdef2345678901abcdef2345678901abcdef",
-      name: "Wooden Shovel",
-      inputs: [
-        { slot: 0, amount: 1 }, // wood planks
-        { slot: 1, amount: 2 }, // sticks
-      ],
-      description: "Basic digging tool",
-    },
-    BUCKET: {
-      id: "0x3456789012abcdef3456789012abcdef3456789012abcdef3456789012abcdef",
-      name: "Bucket",
-      inputs: [
-        { slot: 0, amount: 3 }, // iron ingots
-      ],
-      description: "For carrying water",
+  public recipes: Record<string, Recipe> = {
+    WheatSlop: {
+      id: "0xf05253d91fb7242ec0a2d42363ab669ae8aa483b2e7c683cf175dce5f7f4242e",
+      name: "Wheat Slop",
+      inputs: [{ slot: 92, amount: 16 }],
     },
   };
 
   // Craft an item using inventory materials (CraftSystem)
-  async craft(
-    recipeId: number,
-    quantity: number = 1,
-    inputSlots: number[] = [],
-    outputSlot: number = 0
-  ): Promise<void> {
+  async craft(recipeId: string, inputs: [number, number][]): Promise<void> {
     console.log(
-      `🔨 Crafting recipe ${recipeId} x${quantity} with inputs from slots [${inputSlots.join(
-        ","
-      )}] to slot ${outputSlot}`
+      `🔨 Crafting recipe ${recipeId} with inputs from slots [${inputs
+        .map(([slot, amount]) => `${slot}(${amount})`)
+        .join(", ")}]`
     );
 
     // Encode input slots as bytes if needed
     const encodedInputs =
-      inputSlots.length > 0
+      inputs.length > 0
         ? "0x" +
-          inputSlots.map((slot) => slot.toString(16).padStart(2, "0")).join("")
+          inputs
+            .map(([slot, amount]) => slot.toString(16).padStart(2, "0"))
+            .join("")
         : "0x";
 
     await this.executeSystemCall(
       this.SYSTEM_IDS.CRAFT_SYSTEM,
-      "craft(bytes32,uint16,uint16,uint16[],uint16,bytes)",
-      [
-        this.characterEntityId,
-        recipeId,
-        quantity,
-        inputSlots,
-        outputSlot,
-        encodedInputs, // extra data for recipe details
-      ],
+      "craft(bytes32,bytes32,[uint256, uint256][])",
+      [this.characterEntityId, recipeId, inputs],
       "Crafting item"
     );
   }
