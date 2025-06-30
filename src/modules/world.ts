@@ -1,7 +1,6 @@
 import { DustGameBase } from "../core/base.js";
-import { Vec3 } from "../types.js";
+import { Vec3, ObjectTypes, EntityId } from "../types";
 import { ethers } from "ethers";
-import { ObjectTypes } from "../types/objectTypes.js";
 import { packVec3 } from "../utils.js";
 
 export class WorldModule extends DustGameBase {
@@ -55,9 +54,9 @@ export class WorldModule extends DustGameBase {
    */
   private encodeCoord(
     entityType: number,
-    coord: [number, number, number]
+    coord: { x: number; y: number; z: number }
   ): string {
-    const packedCoord = this.packVec3(coord);
+    const packedCoord = this.packVec3([coord.x, coord.y, coord.z]);
     return this.encodeEntity(
       entityType,
       packedCoord << (this.ENTITY_ID_BITS - this.VEC3_BITS)
@@ -68,12 +67,12 @@ export class WorldModule extends DustGameBase {
    * Encode block coordinate into EntityId
    * Re-implementation of encodeBlock from entityid.ts
    */
-  private encodeBlock(coord: [number, number, number]): string {
+  encodeBlock(coord: { x: number; y: number; z: number }): string {
     return this.encodeCoord(this.EntityTypes.Block, coord);
   }
 
   async getObjectTypeAt(coord: Vec3): Promise<number> {
-    const entityId = this.encodeBlock([coord.x, coord.y, coord.z]);
+    const entityId = this.encodeBlock({ x: coord.x, y: coord.y, z: coord.z });
 
     try {
       const [staticData] = await this.worldContract.getRecord(
@@ -250,5 +249,69 @@ export class WorldModule extends DustGameBase {
     );
 
     return parseInt(blockTypeByte, 16);
+  }
+
+  async commitChunk(coord: Vec3): Promise<void> {
+    console.log("committing chunk", coord);
+    const chunkCoord = packVec3(this.toChunkCoord(coord));
+    console.log("chunkCoord", chunkCoord);
+    await this.executeSystemCall(
+      this.SYSTEM_IDS.NATURE_SYSTEM,
+      "chunkCommit(bytes32,uint96)",
+      [this.characterEntityId, chunkCoord],
+      "Committing chunk",
+      false
+    );
+  }
+
+  async getPositionOfEntity(entityId: EntityId): Promise<Vec3> {
+    try {
+      // EntityPosition table ID - this is likely how it's encoded in the Dust game
+      // ResourceId format: bytes32 with encoded type and table name
+      const entityPositionTableId =
+        "0x74620000000000000000000000000000456e74697479506f736974696f6e0000";
+
+      // Call getRecord to get position data
+      const result = await this.getRecord(entityPositionTableId, [entityId]);
+
+      if (!result.staticData || result.staticData === "0x") {
+        throw new Error("📍 No position data found for this entity");
+      }
+
+      // Decode position data from staticData
+      // Positions are typically stored as 3 int32 values (x, y, z) = 12 bytes total
+      const staticData = result.staticData;
+
+      if (staticData.length < 26) {
+        // 0x + 24 hex chars (12 bytes)
+        throw new Error("📍 Invalid position data length");
+      }
+
+      // Extract x, y, z as int32 values (4 bytes each)
+      // Remove '0x' and split into chunks of 8 hex chars (4 bytes each)
+      const hexData = staticData.slice(2);
+
+      const xHex = hexData.slice(0, 8);
+      const yHex = hexData.slice(8, 16);
+      const zHex = hexData.slice(16, 24);
+
+      // Convert to signed 32-bit integers
+      const x = this.hexToInt32(xHex);
+      const y = this.hexToInt32(yHex);
+      const z = this.hexToInt32(zHex);
+
+      const position = { x, y, z };
+      return position;
+    } catch (error) {
+      console.log("📍 Failed to read position from game state:", error);
+      throw error;
+    }
+  }
+
+  // Helper function to convert hex string to signed 32-bit integer
+  private hexToInt32(hex: string): number {
+    const uint32 = parseInt(hex, 16);
+    // Convert to signed 32-bit integer
+    return uint32 > 0x7fffffff ? uint32 - 0x100000000 : uint32;
   }
 }

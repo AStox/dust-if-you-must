@@ -1,5 +1,5 @@
 import { DustGameBase, TransactionMonitor } from "../core/base.js";
-import { Vec3 } from "../types.js";
+import { Vec3 } from "../types";
 import { packVec3, isValidCoordinate } from "../utils.js";
 import {
   withRetry,
@@ -160,13 +160,11 @@ export class MovementModule extends DustGameBase {
     else if (currentPos.z > target.z) step.z--;
 
     try {
-      console.log("getting ground level");
       const groundLevel = await this.world.getGroundLevel(
         step.x,
         step.z,
         step.y + 2
       );
-      console.log("ground level", groundLevel);
       step.y = groundLevel;
     } catch (error) {
       // If we get an error, wait 2 seconds for blocks to be processed, get latest position and set y to 1 above it

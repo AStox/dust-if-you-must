@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { Vec3, EntityId } from "./types.js";
+import { Vec3, EntityId } from "./types";
 
 // Encode EntityId (bytes32)
 export function encodeEntityId(entityId: EntityId): string {

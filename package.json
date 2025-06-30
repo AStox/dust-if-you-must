@@ -11,7 +11,8 @@
     "farm": "tsx scripts/farm-procedure.ts",
     "move": "tsx scripts/simple-move.ts",
     "build-demo": "tsx scripts/building-demo.ts",
-    "craft": "tsx scripts/crafting-demo.ts"
+    "craft": "tsx scripts/crafting-demo.ts",
+    "pickup": "tsx scripts/pickup-all.ts"
   },
   "dependencies": {
     "ethers": "^6.8.1",

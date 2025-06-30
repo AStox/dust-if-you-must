@@ -1,10 +1,11 @@
 import { DustGameBase, PlayerState } from "../core/base.js";
 import DustBot from "../index.js";
-import { EntityId, Vec3 } from "../types.js";
+import { EntityId, Vec3 } from "../types";
 import { ethers } from "ethers";
 
 export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
+  private maxEnergy: number = 817600000000000000;
 
   async checkStatusAndActivate(bot: DustBot): Promise<void> {
     const playerState = await bot.getPlayerState();
@@ -247,7 +248,6 @@ export class PlayerModule extends DustGameBase {
       const z = this.hexToInt32(zHex);
 
       const position = { x, y, z };
-
       return position;
     } catch (error) {
       console.log("📍 Failed to read position from game state:", error);

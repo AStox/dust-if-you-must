@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { EntityId, Vec3 } from "../types.js";
+import { EntityId, Vec3 } from "../types";
 import DustBot from "../index.js";
 import path from "path";
 import fs from "fs";
@@ -9,6 +9,7 @@ interface PendingTransaction {
   description: string;
   timestamp: number;
   promise: Promise<ethers.TransactionReceipt>;
+  terminateOnFailure: boolean;
 }
 
 // Player state enum
@@ -45,6 +46,10 @@ export abstract class DustGameBase {
       "0x73790000000000000000000000000000537061776e53797374656d0000000000",
     INVENTORY_SYSTEM:
       "0x73790000000000000000000000000000496e76656e746f727953797374656d00",
+    NATURE_SYSTEM:
+      "0x737900000000000000000000000000004e617475726553797374656d00000000",
+    TRANSFER_SYSTEM:
+      "0x737900000000000000000000000000005472616e7366657253797374656d0000",
   };
 
   constructor() {
@@ -85,7 +90,8 @@ export abstract class DustGameBase {
     systemId: string,
     functionSig: string,
     params: any[],
-    description: string
+    description: string,
+    terminateOnFailure: boolean = true
   ): Promise<string> {
     try {
       // Encode the function call data
@@ -133,7 +139,12 @@ export abstract class DustGameBase {
       } else {
         // Add non-movement transactions to monitoring with termination
         const receiptPromise = tx.wait(1);
-        this.txMonitor.addTransaction(tx.hash, description, receiptPromise);
+        this.txMonitor.addTransaction(
+          tx.hash,
+          description,
+          receiptPromise,
+          terminateOnFailure
+        );
       }
 
       return tx.hash;
@@ -148,7 +159,8 @@ export abstract class DustGameBase {
     functionSig: string,
     params: any[],
     description: string,
-    useOptimizedGas: boolean = true
+    useOptimizedGas: boolean = true,
+    terminateOnFailure: boolean = true
   ): Promise<ethers.TransactionReceipt> {
     if (functionSig !== "move(bytes32,uint96[])") {
       console.log(`📋 Function: ${functionSig}`);
@@ -331,13 +343,15 @@ export class TransactionMonitor {
   addTransaction(
     hash: string,
     description: string,
-    promise: Promise<ethers.TransactionReceipt>
+    promise: Promise<ethers.TransactionReceipt>,
+    terminateOnFailure: boolean = true
   ): void {
     const pending: PendingTransaction = {
       hash,
       description,
       timestamp: Date.now(),
       promise,
+      terminateOnFailure,
     };
 
     this.pendingTransactions.set(hash, pending);
@@ -354,13 +368,17 @@ export class TransactionMonitor {
           console.log(`✅ Background confirmation: ${description} (${hash})`);
         } else {
           console.error(`❌ Background failure: ${description} (${hash})`);
-          this.terminateOnFailure(description, hash);
+          if (terminateOnFailure) {
+            this.terminateOnFailure(description, hash);
+          }
         }
         this.pendingTransactions.delete(hash);
       })
       .catch((error) => {
         console.error(`❌ Background error: ${description} (${hash}):`, error);
-        this.terminateOnFailure(description, hash);
+        if (terminateOnFailure) {
+          this.terminateOnFailure(description, hash);
+        }
         this.pendingTransactions.delete(hash);
       });
   }

@@ -1,15 +1,18 @@
 import { DustGameBase } from "../core/base.js";
-import { Vec3 } from "../types.js";
+import { Vec3, getObjectIdByName } from "../types";
 import { packVec3, isValidCoordinate } from "../utils.js";
-import { ObjectTypes, getObjectIdByName } from "../types/objectTypes.js";
 import { InventoryModule } from "./inventory.js";
+import { WorldModule } from "./world.js";
 
 export class FarmingModule extends DustGameBase {
   private inventory: InventoryModule;
+  private world: WorldModule;
+  private harvestingDelay: number = 700;
 
   constructor() {
     super();
     this.inventory = new InventoryModule();
+    this.world = new WorldModule();
   }
 
   // Fill bucket from water source (BucketSystem)
@@ -100,6 +103,22 @@ export class FarmingModule extends DustGameBase {
     await this.plant(coord, seedSlot);
   }
 
+  async growSeed(coord: Vec3): Promise<void> {
+    if (!isValidCoordinate(coord)) {
+      throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
+    }
+    await this.executeSystemCallNonBlocking(
+      this.SYSTEM_IDS.NATURE_SYSTEM,
+      "growSeed(bytes32,uint96)",
+      [
+        this.characterEntityId,
+        packVec3({ x: coord.x, y: coord.y + 1, z: coord.z }),
+      ],
+      "Growing seed"
+    );
+    await new Promise((resolve) => setTimeout(resolve, this.harvestingDelay));
+  }
+
   // Harvest crops (if this function exists in the game - may need different system)
   async harvest(coord: Vec3): Promise<void> {
     if (!isValidCoordinate(coord)) {
@@ -109,10 +128,40 @@ export class FarmingModule extends DustGameBase {
     console.log(`🚜 Harvesting at (${coord.x}, ${coord.y}, ${coord.z})`);
 
     await this.executeSystemCallNonBlocking(
-      this.SYSTEM_IDS.BUILD_SYSTEM,
+      this.SYSTEM_IDS.MINE_SYSTEM,
       "mineUntilDestroyed(bytes32,uint96,bytes)",
-      [this.characterEntityId, packVec3(coord), "0x"],
+      [
+        this.characterEntityId,
+        packVec3({ x: coord.x, y: coord.y + 1, z: coord.z }),
+        "0x",
+      ],
       "Harvesting crops"
     );
+    await new Promise((resolve) => setTimeout(resolve, this.harvestingDelay));
+  }
+
+  async isPlantReadyToGrow(coord: Vec3): Promise<boolean> {
+    const plantTableId =
+      "0x746200000000000000000000000000005365656447726f777468000000000000";
+
+    const blockID = await this.world.encodeBlock(coord);
+    const result = await this.getRecord(plantTableId, [blockID]);
+
+    if (!result.staticData || result.staticData === "0x") {
+      return false;
+    }
+
+    const hexData = result.staticData.slice(2);
+    if (hexData.length < 8) {
+      return false;
+    }
+
+    // Extract timestamp from the last 8 hex chars (4 bytes)
+    const fullyGrownAtHex = hexData.slice(-8);
+    const fullyGrownAt = BigInt("0x" + fullyGrownAtHex);
+
+    const currentTime = BigInt(Math.floor(Date.now() / 1000));
+    console.log("fullyGrownAt", fullyGrownAt, fullyGrownAt <= currentTime);
+    return fullyGrownAt <= currentTime;
   }
 }

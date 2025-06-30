@@ -40,3 +40,25 @@ export const FUNCTION_SELECTORS = {
   build: "0x6ea5b24e",
   craft: "0x37c8dabe",
 } as const;
+
+export interface BotState {
+  location: "coast" | "house" | "farm" | "unknown";
+  position: Vec3;
+  emptyBuckets: number;
+  waterBuckets: number;
+  wheatSeeds: number;
+  wheat: number;
+  slop: number;
+  unwateredPlots: number;
+  unseededPlots: number;
+  ungrownPlots: number;
+  unharvestedPlots: number;
+  totalPlots: number;
+}
+
+export interface UtilityAction {
+  name: string;
+  calculateScore(state: BotState): number;
+  execute(bot: any): Promise<void>; // Using any to avoid circular import
+  canExecute(state: BotState): boolean;
+}

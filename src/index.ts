@@ -6,7 +6,7 @@ import { CraftingModule } from "./modules/crafting.js";
 import { PlayerModule } from "./modules/player.js";
 import { WorldModule } from "./modules/world.js";
 import { InventoryModule } from "./modules/inventory.js";
-import { Vec3 } from "./types.js";
+import { Vec3 } from "./types";
 import { PlayerState } from "./core/base.js";
 
 // Load environment variables

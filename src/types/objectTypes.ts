@@ -1,7 +1,6 @@
-export const ObjectTypes: Record<
-  number,
-  { name: string; passThrough: boolean }
-> = {
+export type ObjectType = { name: string; passThrough: boolean };
+
+export const ObjectTypes: Record<number, ObjectType> = {
   // Basic blocks
   0: { name: "Null", passThrough: true },
   1: { name: "Air", passThrough: true },

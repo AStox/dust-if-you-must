@@ -1,11 +1,19 @@
 import { DustGameBase } from "../core/base.js";
-import { EntityId } from "../types.js";
-import { getObjectIdByName, ObjectTypes } from "../types/objectTypes.js";
+import { EntityId } from "../types";
+import { packVec3 } from "../utils.js";
+import { WorldModule } from "./world.js";
 
 export class InventoryModule extends DustGameBase {
+  private world: WorldModule;
+  constructor() {
+    super();
+    this.world = new WorldModule();
+  }
+
   // Get inventory slot contents
   async getInventorySlot(
-    slot: number
+    slot: number,
+    entityId: EntityId
   ): Promise<{ itemType: number; amount: number } | null> {
     try {
       const inventoryTableId =
@@ -13,7 +21,7 @@ export class InventoryModule extends DustGameBase {
 
       // Create key tuple for the inventory slot - convert slot number to bytes32
       const slotBytes32 = "0x" + slot.toString(16).padStart(64, "0");
-      const keyTuple = [this.characterEntityId, slotBytes32];
+      const keyTuple = [entityId, slotBytes32];
 
       // Get record from inventory table
       const result = await this.getRecord(inventoryTableId, keyTuple);
@@ -49,25 +57,28 @@ export class InventoryModule extends DustGameBase {
   }
 
   // Get comprehensive inventory summary for debugging
-  async getInventory(): Promise<{ type: number; amount: number }[]> {
+  async getInventory(
+    entityId: EntityId
+  ): Promise<{ type: number; amount: number }[]> {
     // Show all non-empty slots
-    const nonEmptySlots: { type: number; amount: number }[] = [];
+    const slots: { type: number; amount: number }[] = [];
     for (let slot = 0; slot < 40; slot++) {
-      const slotContents = await this.getInventorySlot(slot);
-      if (slotContents?.itemType !== 0) {
-        nonEmptySlots.push({
-          type: slotContents!.itemType,
-          amount: slotContents!.amount,
-        });
-      }
+      const slotContents = await this.getInventorySlot(slot, entityId);
+      slots.push({
+        type: slotContents!.itemType,
+        amount: slotContents!.amount,
+      });
     }
 
-    return nonEmptySlots;
+    return slots;
   }
 
-  async getSlotForItemType(itemType: number): Promise<number> {
+  async getSlotForItemType(
+    itemType: number,
+    entityId: EntityId = this.characterEntityId
+  ): Promise<number> {
     for (let slot = 0; slot < 40; slot++) {
-      const slotContents = await this.getInventorySlot(slot);
+      const slotContents = await this.getInventorySlot(slot, entityId);
       if (slotContents?.itemType === itemType) {
         return slot;
       }
@@ -75,16 +86,32 @@ export class InventoryModule extends DustGameBase {
     throw new Error(`No slot found for item type ${itemType}`);
   }
 
-  async transferAmount(
+  async transfer(
     fromEntityId: EntityId,
     toEntityId: EntityId,
-    amounts: [number, number][] // [slot, amount]
+    transfers: [number, number, number][] // [slot, amount, amount]
   ): Promise<void> {
     await this.executeSystemCall(
-      this.SYSTEM_IDS.INVENTORY_SYSTEM,
-      "transferAmount((bytes32, bytes32, bytes32, amounts[], bytes)",
-      [this.characterEntityId, fromEntityId, toEntityId, amounts, "0x"],
+      this.SYSTEM_IDS.TRANSFER_SYSTEM,
+      "transfer(bytes32,bytes32,bytes32,(uint16,uint16,uint16)[],bytes)",
+      [this.characterEntityId, fromEntityId, toEntityId, transfers, "0x"],
       "Transferring amount"
+    );
+  }
+
+  async pickUpAll(entityId: EntityId): Promise<void> {
+    const position = await this.world.getPositionOfEntity(entityId);
+    const packed = packVec3({
+      x: position.x,
+      y: position.y + 1,
+      z: position.z,
+    });
+
+    await this.executeSystemCall(
+      this.SYSTEM_IDS.INVENTORY_SYSTEM,
+      "pickupAll(bytes32,uint96)",
+      [entityId, packed],
+      "Picking up all"
     );
   }
 }
