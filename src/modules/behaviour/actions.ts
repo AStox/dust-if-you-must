@@ -1,7 +1,13 @@
 import { DustBot } from "../../index.js";
 import { getObjectIdByName } from "../../types/objectTypes.js";
 import { UtilityAction, BotState } from "../../types/base.js";
-import { coastPosition, farmCenter, rightChestEntityId } from "./state.js";
+import {
+  coastPosition,
+  farmCenter,
+  farmCorner1,
+  farmCorner2,
+  rightChestEntityId,
+} from "./state.js";
 import {
   fillBuckets,
   walkToHouse,
@@ -92,7 +98,27 @@ export const utilityActions: UtilityAction[] = [
       return score;
     },
     execute: async (bot) => {
-      await bot.world.commitChunk(await bot.player.getCurrentPosition());
+      const farmCornerTopLeft = farmCorner1;
+      const farmCornerBotRight = farmCorner2;
+      const farmCornerBotLeft = {
+        x: farmCornerTopLeft.x,
+        y: farmCornerTopLeft.y,
+        z: farmCornerBotRight.z,
+      };
+      const farmCornerTopRight = {
+        x: farmCornerBotRight.x,
+        y: farmCornerTopLeft.y,
+        z: farmCornerTopLeft.z,
+      };
+      console.log("topLeft", farmCornerTopLeft);
+      console.log("botRight", farmCornerBotRight);
+      console.log("botLeft", farmCornerBotLeft);
+      console.log("topRight", farmCornerTopRight);
+      await bot.world.commitChunk(farmCornerTopLeft);
+      await bot.world.commitChunk(farmCornerBotRight);
+      await bot.world.commitChunk(farmCornerBotLeft);
+      await bot.world.commitChunk(farmCornerTopRight);
+
       const farmPlots = await generateFarmPlots();
       await growSeededFarmPlots(bot, farmPlots);
     },
@@ -109,7 +135,26 @@ export const utilityActions: UtilityAction[] = [
       return score;
     },
     execute: async (bot) => {
-      await bot.world.commitChunk(await bot.player.getCurrentPosition());
+      const farmCornerTopLeft = farmCorner1;
+      const farmCornerBotRight = farmCorner2;
+      const farmCornerBotLeft = {
+        x: farmCornerTopLeft.x,
+        y: farmCornerTopLeft.y,
+        z: farmCornerBotRight.z,
+      };
+      const farmCornerTopRight = {
+        x: farmCornerBotRight.x,
+        y: farmCornerTopLeft.y,
+        z: farmCornerTopLeft.z,
+      };
+      console.log("topLeft", farmCornerTopLeft);
+      console.log("botRight", farmCornerBotRight);
+      console.log("botLeft", farmCornerBotLeft);
+      console.log("topRight", farmCornerTopRight);
+      await bot.world.commitChunk(farmCornerTopLeft);
+      await bot.world.commitChunk(farmCornerBotRight);
+      await bot.world.commitChunk(farmCornerBotLeft);
+      await bot.world.commitChunk(farmCornerTopRight);
       const farmPlots = await generateFarmPlots();
       await harvestFarmPlots(bot, farmPlots);
     },
@@ -135,7 +180,7 @@ export const utilityActions: UtilityAction[] = [
           getObjectIdByName("WheatSeed")!,
           rightChestEntityId
         );
-        const slotSeeds = await bot.inventory.getInventorySlot(
+        const slotSeeds = await bot.inventory.getSlotForItemType(
           getObjectIdByName("WheatSeed")!,
           bot.player.characterEntityId
         );
@@ -143,7 +188,7 @@ export const utilityActions: UtilityAction[] = [
         await bot.inventory.transfer(
           rightChestEntityId,
           bot.player.characterEntityId,
-          [[slot, slotSeeds, 99 - currentState.wheatSeeds]]
+          [[slot, slotSeeds || 31, 99 - currentState.wheatSeeds]]
         );
       }
       console.log("transferring slop");
@@ -152,14 +197,14 @@ export const utilityActions: UtilityAction[] = [
           getObjectIdByName("WheatSlop")!
         );
         const slotSlop =
-          (await bot.inventory.getInventorySlot(
+          (await bot.inventory.getSlotForItemType(
             getObjectIdByName("WheatSlop")!,
             bot.player.characterEntityId
           )) || 20;
         await bot.inventory.transfer(
           bot.player.characterEntityId,
           rightChestEntityId,
-          [[slot, slotSlop, currentState.slop]]
+          [[slot, slotSlop || 21, currentState.slop]]
         );
       }
     },
@@ -171,7 +216,7 @@ export const utilityActions: UtilityAction[] = [
     calculateScore: function (state) {
       if (!this.canExecute(state)) return 0;
 
-      let score = 0; // should be 9999
+      let score = 9999;
 
       return score;
     },

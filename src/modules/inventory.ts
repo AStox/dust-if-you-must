@@ -91,6 +91,7 @@ export class InventoryModule extends DustGameBase {
     toEntityId: EntityId,
     transfers: [number, number, number][] // [slot, amount, amount]
   ): Promise<void> {
+    console.log("transfers", transfers);
     await this.executeSystemCall(
       this.SYSTEM_IDS.TRANSFER_SYSTEM,
       "transfer(bytes32,bytes32,bytes32,(uint16,uint16,uint16)[],bytes)",

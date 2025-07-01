@@ -57,16 +57,13 @@ export class MovementModule extends DustGameBase {
         }) -> (${step.x}, ${step.y}, ${step.z})`
       );
 
-      console.log("calculating distance");
       const distance = this.calculateChebyshevDistance(currentPos, step);
-      console.log("distance", distance);
       if (distance > 1) {
         console.log(
           `   ⚠️  ERROR: Distance > 1, this should not happen in step generation!`
         );
       }
 
-      console.log("sending transaction");
       // Send transaction without waiting for confirmation
       await this.executeSystemCallNonBlocking(
         this.SYSTEM_IDS.MOVE_SYSTEM,

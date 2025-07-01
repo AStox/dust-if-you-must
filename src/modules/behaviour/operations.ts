@@ -114,7 +114,7 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
 
   // Water plots one by one until we run out of water or plots
   for (const plot of farmPlots) {
-    console.log("checking plot", plot);
+    // console.log("checking plot", plot);
 
     const plotType = await bot.world.getBlockType(plot);
     if (plotType !== getObjectIdByName("Farmland")!) {
@@ -155,7 +155,7 @@ export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
 
   // Water plots one by one until we run out of water or plots
   for (const plot of farmPlots) {
-    console.log("checking plot", plot);
+    // console.log("checking plot", plot);
 
     const plotType = await bot.world.getBlockType(plot);
     if (plotType !== getObjectIdByName("WetFarmland")!) {
@@ -211,7 +211,14 @@ export async function growSeededFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
       z: plot.z,
     });
 
-    if (plotType === getObjectIdByName("WheatSeed")!) {
+    if (
+      plotType === getObjectIdByName("WheatSeed")! &&
+      (await bot.farming.isPlantReadyToGrow({
+        x: plot.x,
+        y: plot.y + 1,
+        z: plot.z,
+      }))
+    ) {
       try {
         await bot.farming.growSeed(plot);
       } catch (error) {
@@ -233,7 +240,7 @@ export async function harvestFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   console.log("=".repeat(60));
 
   for (const plot of farmPlots) {
-    console.log("checking plot", plot);
+    // console.log("checking plot", plot);
 
     const plotType = await bot.world.getBlockType({
       x: plot.x,

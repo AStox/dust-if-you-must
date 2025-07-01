@@ -161,7 +161,7 @@ export class WorldModule extends DustGameBase {
   }
 
   // Step 1: Convert voxel to chunk coordinate
-  private toChunkCoord(coord: Vec3): Vec3 {
+  public toChunkCoord(coord: Vec3): Vec3 {
     const chunkCoord = {
       x: this.floorDiv(coord.x, this.CHUNK_SIZE),
       y: this.floorDiv(coord.y, this.CHUNK_SIZE),
@@ -262,6 +262,7 @@ export class WorldModule extends DustGameBase {
       "Committing chunk",
       false
     );
+    await new Promise((resolve) => setTimeout(resolve, 1000));
   }
 
   async getPositionOfEntity(entityId: EntityId): Promise<Vec3> {

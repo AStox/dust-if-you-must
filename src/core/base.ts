@@ -159,26 +159,12 @@ export abstract class DustGameBase {
     functionSig: string,
     params: any[],
     description: string,
-    useOptimizedGas: boolean = true,
     terminateOnFailure: boolean = true
   ): Promise<ethers.TransactionReceipt> {
-    if (functionSig !== "move(bytes32,uint96[])") {
-      console.log(`📋 Function: ${functionSig}`);
-      console.log(
-        `📦 Parameters:`,
-        params.map(
-          (p, i) =>
-            `  ${i}: ${
-              typeof p === "string" && p.length > 50
-                ? p.slice(0, 50) + "..."
-                : p
-            }`
-        )
-      );
-    }
-
     try {
       // Encode the function call data
+      console.log("functionSig", functionSig);
+      console.log("params", params);
       const callData = this.encodeCall(functionSig, params);
 
       // Use optimized gas settings for Redstone chain
@@ -186,19 +172,19 @@ export abstract class DustGameBase {
       let maxFeePerGas: bigint;
       let maxPriorityFeePerGas: bigint;
 
-      if (useOptimizedGas) {
-        // Conservative gas settings for low-funded wallets on Redstone
-        gasLimit = BigInt(process.env.GAS_LIMIT || "200000"); // Much lower default
-        maxFeePerGas = ethers.parseUnits("0.000002", "gwei"); // Very low for Redstone
-        maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei"); // Minimal priority fee
-      } else {
-        // Try to estimate gas, but fallback to reasonable defaults
-        gasLimit = await this.estimateGas(systemId, callData);
-        maxFeePerGas = ethers.parseUnits("0.00001", "gwei");
-        maxPriorityFeePerGas = ethers.parseUnits("0.000001", "gwei");
+      // if (useOptimizedGas) {
+      //   // Conservative gas settings for low-funded wallets on Redstone
+      // gasLimit = BigInt(process.env.GAS_LIMIT || "200000"); // Much lower default
+      // maxFeePerGas = ethers.parseUnits("0.000002", "gwei"); // Very low for Redstone
+      // maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei"); // Minimal priority fee
+      // } else {
+      //   // Try to estimate gas, but fallback to reasonable defaults
+      gasLimit = await this.estimateGas(systemId, callData);
+      maxFeePerGas = ethers.parseUnits("0.00001", "gwei");
+      maxPriorityFeePerGas = ethers.parseUnits("0.000001", "gwei");
 
-        console.log(`⛽ Gas estimate: ${gasLimit}`);
-      }
+      //   console.log(`⛽ Gas estimate: ${gasLimit}`);
+      // }
 
       // Call the system through the World contract
       const tx = await this.worldContract.call(systemId, callData, {
@@ -213,30 +199,53 @@ export abstract class DustGameBase {
       const receipt = await tx.wait(1);
 
       if (receipt && receipt.status === 1) {
-        console.log(
-          `================= ✅ ${description} successful! =================`
-        );
+        console.log(`✅ ${description} successful!`);
         return receipt;
       } else {
-        throw new Error(
-          `${description} transaction failed - status: ${
-            receipt?.status || "unknown"
-          }`
-        );
+        if (terminateOnFailure) {
+          throw new Error(
+            `(${
+              receipt?.transactionHash
+            }) ${description} transaction failed - status: ${
+              receipt?.status || "unknown"
+            }`
+          );
+        } else {
+          console.log(
+            `(${
+              receipt?.transactionHash
+            }) ${description} transaction failed - status: ${
+              receipt?.status || "unknown"
+            }`
+          );
+          return receipt;
+        }
       }
     } catch (error) {
-      throw error;
+      if (terminateOnFailure) {
+        console.log("terminateOnFailure");
+        throw error;
+      } else {
+        console.log("failure. continuing...");
+        console.log(`error: ${error}`);
+      }
     }
   }
 
   // Encode function call data
   protected encodeCall(functionSig: string, params: any[]): string {
     const functionSelector = ethers.id(functionSig).slice(0, 10);
-    const types = functionSig
-      .split("(")[1]
-      .split(")")[0]
-      .split(",")
-      .filter((t) => t.length > 0);
+
+    // Parse function signature properly handling nested parentheses
+    const firstParenIndex = functionSig.indexOf("(");
+    const lastParenIndex = functionSig.lastIndexOf(")");
+    const paramString = functionSig.substring(
+      firstParenIndex + 1,
+      lastParenIndex
+    );
+
+    // Parse types while respecting nested parentheses and brackets
+    const types = this.parseParameterTypes(paramString);
 
     let encodedParams = "";
     if (types.length > 0 && params.length > 0) {
@@ -257,6 +266,37 @@ export abstract class DustGameBase {
     }
 
     return functionSelector + encodedParams;
+  }
+
+  private parseParameterTypes(paramString: string): string[] {
+    if (!paramString.trim()) return [];
+
+    const types: string[] = [];
+    let current = "";
+    let depth = 0;
+
+    for (let i = 0; i < paramString.length; i++) {
+      const char = paramString[i];
+
+      if (char === "(" || char === "[") {
+        depth++;
+        current += char;
+      } else if (char === ")" || char === "]") {
+        depth--;
+        current += char;
+      } else if (char === "," && depth === 0) {
+        types.push(current.trim());
+        current = "";
+      } else {
+        current += char;
+      }
+    }
+
+    if (current.trim()) {
+      types.push(current.trim());
+    }
+
+    return types;
   }
 
   // Estimate gas for a system call

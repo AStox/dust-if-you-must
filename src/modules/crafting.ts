@@ -26,11 +26,11 @@ export class CraftingModule extends DustGameBase {
         .map(([slot, amount]) => `${slot}(${amount})`)
         .join(", ")}]`
     );
-    console.log(this.characterEntityId, recipeId, inputs.flat());
+    console.log(this.characterEntityId, recipeId, inputs);
     await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.CRAFT_SYSTEM,
-      "craft(bytes32,bytes32,uint16[])",
-      [this.characterEntityId, recipeId, inputs.flat()],
+      "craft(bytes32,bytes32,(uint16,uint16)[])",
+      [this.characterEntityId, recipeId, inputs],
       "Crafting item"
     );
   }

@@ -52,7 +52,7 @@ async function main() {
       await bestAction.execute(bot);
       console.log(`✅ Completed: ${bestAction.name}`);
     } catch (error) {
-      console.error(`❌ Failed to execute ${bestAction.name}:`, error);
+      console.error(error);
       throw error;
     }
   }

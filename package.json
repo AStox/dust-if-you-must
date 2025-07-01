@@ -12,7 +12,8 @@
     "move": "tsx scripts/simple-move.ts",
     "build-demo": "tsx scripts/building-demo.ts",
     "craft": "tsx scripts/crafting-demo.ts",
-    "pickup": "tsx scripts/pickup-all.ts"
+    "pickup": "tsx scripts/pickup-all.ts",
+    "toChunkCoord": "tsx scripts/to-chunk-coord.ts"
   },
   "dependencies": {
     "ethers": "^6.8.1",
