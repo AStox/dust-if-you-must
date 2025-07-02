@@ -50,6 +50,8 @@ export abstract class DustGameBase {
       "0x737900000000000000000000000000004e617475726553797374656d00000000",
     TRANSFER_SYSTEM:
       "0x737900000000000000000000000000005472616e7366657253797374656d0000",
+    FOOD_SYSTEM:
+      "0x73790000000000000000000000000000466f6f6453797374656d000000000000",
   };
 
   constructor() {
@@ -167,24 +169,13 @@ export abstract class DustGameBase {
       console.log("params", params);
       const callData = this.encodeCall(functionSig, params);
 
-      // Use optimized gas settings for Redstone chain
       let gasLimit: bigint;
       let maxFeePerGas: bigint;
       let maxPriorityFeePerGas: bigint;
 
-      // if (useOptimizedGas) {
-      //   // Conservative gas settings for low-funded wallets on Redstone
-      // gasLimit = BigInt(process.env.GAS_LIMIT || "200000"); // Much lower default
-      // maxFeePerGas = ethers.parseUnits("0.000002", "gwei"); // Very low for Redstone
-      // maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei"); // Minimal priority fee
-      // } else {
-      //   // Try to estimate gas, but fallback to reasonable defaults
-      gasLimit = await this.estimateGas(systemId, callData);
-      maxFeePerGas = ethers.parseUnits("0.00001", "gwei");
-      maxPriorityFeePerGas = ethers.parseUnits("0.000001", "gwei");
-
-      //   console.log(`⛽ Gas estimate: ${gasLimit}`);
-      // }
+      gasLimit = BigInt(process.env.GAS_LIMIT || "200000");
+      maxFeePerGas = ethers.parseUnits("0.000002", "gwei");
+      maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei");
 
       // Call the system through the World contract
       const tx = await this.worldContract.call(systemId, callData, {

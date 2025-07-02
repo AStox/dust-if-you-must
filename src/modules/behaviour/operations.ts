@@ -8,6 +8,7 @@ import {
   farmCenter,
   farmCorner1,
   farmCorner2,
+  rightChestEntityId,
 } from "./state.js";
 
 export async function walkToCoast(bot: DustBot) {
@@ -112,8 +113,31 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   console.log("🚜 WATERING FARM PLOTS");
   console.log("=".repeat(60));
 
+  const inventory = await bot.inventory.getInventory(
+    bot.player.characterEntityId
+  );
+
+  const waterBucketId = getObjectIdByName("WaterBucket")!;
+  const waterBucketSlots = inventory
+    .map((item, index) => ({ item, index }))
+    .filter(({ item }) => item.type === waterBucketId)
+    .map(({ index }) => index);
+
+  console.log("waterBucketSlots", waterBucketSlots);
+
+  if (waterBucketSlots.length === 0) {
+    console.log("🪣 No water buckets available");
+    return;
+  }
+
   // Water plots one by one until we run out of water or plots
+  let waterBucketIndex = 0;
   for (const plot of farmPlots) {
+    if (waterBucketIndex >= waterBucketSlots.length) {
+      console.log("🪣 Out of water buckets - stopping watering");
+      break;
+    }
+
     // console.log("checking plot", plot);
 
     const plotType = await bot.world.getBlockType(plot);
@@ -124,22 +148,9 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
       continue; // Skip already watered or non-farmland plots
     }
 
-    const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
-    );
-
-    const waterBucketId = getObjectIdByName("WaterBucket")!;
-    const waterBucketCount = inventory.filter(
-      (item) => item.type === waterBucketId
-    ).length;
-
-    if (waterBucketCount === 0) {
-      console.log("🪣 Out of water buckets - stopping watering");
-      break;
-    }
-
     try {
-      await bot.farming.wetFarmland(plot);
+      await bot.farming.wetFarmland(plot, waterBucketSlots[waterBucketIndex]);
+      waterBucketIndex++;
     } catch (error) {
       console.log(
         `⚠️ Failed to water plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
@@ -261,5 +272,27 @@ export async function harvestFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
         `⚠️ Failed to harvest plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
       );
     }
+  }
+}
+
+export async function transferToFromChest(bot: DustBot) {
+  const currentState = bot.state;
+  console.log("transferring wheat seeds");
+  if (currentState.wheatSeeds < 99) {
+    await bot.inventory.transferAmount(
+      rightChestEntityId,
+      bot.player.characterEntityId,
+      getObjectIdByName("WheatSeed")!,
+      99 - currentState.wheatSeeds
+    );
+  }
+  console.log("transferring slop");
+  if (currentState.slop > 0) {
+    await bot.inventory.transferAmount(
+      bot.player.characterEntityId,
+      rightChestEntityId,
+      getObjectIdByName("WheatSlop")!,
+      currentState.slop
+    );
   }
 }

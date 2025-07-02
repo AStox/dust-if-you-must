@@ -220,7 +220,13 @@ export class WorldModule extends DustGameBase {
 
   // Full implementation
   public async getBlockType(coord: Vec3): Promise<number> {
-    const blockType = await this.getObjectTypeAt(coord);
+    let blockType = 0;
+    try {
+      blockType = await this.getObjectTypeAt(coord);
+    } catch (error) {
+      console.log("No object type found, trying to get block type");
+    }
+
     if (blockType !== 0) {
       return blockType;
     }

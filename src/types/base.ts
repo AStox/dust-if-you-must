@@ -1,6 +1,9 @@
-// Dust game types based on MUD framework
-
 export type EntityId = string; // bytes32 as hex string
+
+export interface InventoryItem {
+  type: number;
+  amount: number;
+}
 
 export interface Vec3 {
   x: number;
@@ -44,6 +47,7 @@ export const FUNCTION_SELECTORS = {
 export interface BotState {
   location: "coast" | "house" | "farm" | "unknown";
   position: Vec3;
+  energy: number;
   emptyBuckets: number;
   waterBuckets: number;
   wheatSeeds: number;
@@ -54,6 +58,7 @@ export interface BotState {
   ungrownPlots: number;
   unharvestedPlots: number;
   totalPlots: number;
+  inventory: InventoryItem[];
 }
 
 export interface UtilityAction {

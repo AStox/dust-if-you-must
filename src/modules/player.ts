@@ -5,7 +5,6 @@ import { ethers } from "ethers";
 
 export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
-  private maxEnergy: number = 817600000000000000;
 
   async checkStatusAndActivate(bot: DustBot): Promise<void> {
     const playerState = await bot.getPlayerState();

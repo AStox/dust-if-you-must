@@ -34,8 +34,8 @@ async function main() {
     loopCount++;
 
     // Assess current state
-    const state = await assessCurrentState(bot);
-    await logCurrentState(state);
+    bot.state = await assessCurrentState(bot);
+    await logCurrentState(bot.state);
 
     // Check if we're done
     // if (state.unwateredPlots === 0) {
@@ -45,12 +45,12 @@ async function main() {
     // }
 
     // Select and execute best action
-    const bestAction = await selectBestAction(state);
+    const bestAction = await selectBestAction(bot.state);
     console.log(`\n🎯 Executing: ${bestAction.name}`);
 
     try {
       await bestAction.execute(bot);
-      console.log(`✅ Completed: ${bestAction.name}`);
+      // console.log(`✅ Completed: ${bestAction.name}`);
     } catch (error) {
       console.error(error);
       throw error;

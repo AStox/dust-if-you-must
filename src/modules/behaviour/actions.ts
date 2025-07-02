@@ -6,6 +6,7 @@ import {
   farmCenter,
   farmCorner1,
   farmCorner2,
+  MAX_ENERGY,
   rightChestEntityId,
 } from "./state.js";
 import {
@@ -18,6 +19,7 @@ import {
   seedFarmPlots,
   harvestFarmPlots,
   growSeededFarmPlots,
+  transferToFromChest,
 } from "./operations.js";
 import { assessCurrentState } from "./state.js";
 
@@ -174,39 +176,7 @@ export const utilityActions: UtilityAction[] = [
       return score;
     },
     execute: async (bot) => {
-      const currentState = await assessCurrentState(bot);
-      if (currentState.wheatSeeds < 99) {
-        const slot = await bot.inventory.getSlotForItemType(
-          getObjectIdByName("WheatSeed")!,
-          rightChestEntityId
-        );
-        const slotSeeds = await bot.inventory.getSlotForItemType(
-          getObjectIdByName("WheatSeed")!,
-          bot.player.characterEntityId
-        );
-        console.log("transferring wheat seeds");
-        await bot.inventory.transfer(
-          rightChestEntityId,
-          bot.player.characterEntityId,
-          [[slot, slotSeeds || 31, 99 - currentState.wheatSeeds]]
-        );
-      }
-      console.log("transferring slop");
-      if (currentState.slop > 0) {
-        const slot = await bot.inventory.getSlotForItemType(
-          getObjectIdByName("WheatSlop")!
-        );
-        const slotSlop =
-          (await bot.inventory.getSlotForItemType(
-            getObjectIdByName("WheatSlop")!,
-            bot.player.characterEntityId
-          )) || 20;
-        await bot.inventory.transfer(
-          bot.player.characterEntityId,
-          rightChestEntityId,
-          [[slot, slotSlop || 21, currentState.slop]]
-        );
-      }
+      await transferToFromChest(bot);
     },
   },
 
@@ -225,7 +195,7 @@ export const utilityActions: UtilityAction[] = [
         getObjectIdByName("Wheat")!
       );
       await bot.crafting.craft(bot.crafting.recipes["WheatSlop"].id, [
-        [wheatSlot, 16],
+        [wheatSlot[0], 16],
       ]);
     },
   },
@@ -286,6 +256,27 @@ export const utilityActions: UtilityAction[] = [
     execute: async () => {
       console.log("⏰ Waiting for 1 minute...");
       await new Promise((resolve) => setTimeout(resolve, 60000)); // Wait 1 minute
+    },
+  },
+
+  {
+    name: "EAT",
+    canExecute: (state) => state.slop > 0 && state.energy / MAX_ENERGY < 0.25,
+    calculateScore: function (state) {
+      if (!this.canExecute(state)) return 0;
+
+      let score = 10000;
+
+      return score;
+    },
+    execute: async (bot) => {
+      await bot.inventory.eat(
+        (
+          await bot.inventory.getSlotForItemType(
+            getObjectIdByName("WheatSlop")!
+          )
+        )[0]
+      );
     },
   },
 ];

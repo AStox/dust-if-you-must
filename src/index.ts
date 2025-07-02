@@ -6,7 +6,7 @@ import { CraftingModule } from "./modules/crafting.js";
 import { PlayerModule } from "./modules/player.js";
 import { WorldModule } from "./modules/world.js";
 import { InventoryModule } from "./modules/inventory.js";
-import { Vec3 } from "./types";
+import { BotState, Vec3 } from "./types";
 import { PlayerState } from "./core/base.js";
 
 // Load environment variables
@@ -20,6 +20,7 @@ export class DustBot {
   public player: PlayerModule;
   public world: WorldModule;
   public inventory: InventoryModule;
+  public state: BotState;
   constructor() {
     console.log("🤖 Initializing Dust Bot...");
 
@@ -31,6 +32,21 @@ export class DustBot {
     this.player = new PlayerModule();
     this.world = new WorldModule();
     this.inventory = new InventoryModule();
+    this.state = {
+      location: "unknown",
+      position: { x: 0, y: 0, z: 0 },
+      energy: 0,
+      emptyBuckets: 0,
+      waterBuckets: 0,
+      wheatSeeds: 0,
+      wheat: 0,
+      slop: 0,
+      unwateredPlots: 0,
+      unseededPlots: 0,
+      ungrownPlots: 0,
+      unharvestedPlots: 0,
+      totalPlots: 0,
+    };
     console.log("✅ All modules initialized!");
   }
 

@@ -5,6 +5,7 @@ import { generateFarmPlots } from "./operations.js";
 
 // Configurable delay constants
 export const DEFAULT_OPERATION_DELAY = 4000; // milliseconds
+export const MAX_ENERGY: number = 817600000000000000;
 
 // Define key locations
 export const coastPosition: Vec3 = { x: -443, y: 63, z: 489 };
@@ -17,7 +18,7 @@ export const farmCorner1: Vec3 = { x: -405, y: 72, z: 479 };
 export const farmCorner2: Vec3 = { x: -398, y: 72, z: 486 };
 
 // Thresholds
-export const LOCATION_THRESHOLD = 10; // blocks
+export const LOCATION_THRESHOLD = 1; // blocks
 
 // Utility Functions
 function calculateDistance(pos1: Vec3, pos2: Vec3): number {
@@ -41,8 +42,6 @@ function determineLocation(
     { location: "farm" as const, distance: distanceToFarm },
   ];
 
-  console.log("distances", distances);
-
   const closest = distances.reduce((min, current) =>
     current.distance < min.distance ? current : min
   );
@@ -56,6 +55,7 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
   const inventory = await bot.inventory.getInventory(
     bot.player.characterEntityId
   );
+  const energy = Number(await bot.player.getPlayerEnergy());
   console.log("inventory", inventory);
   const position = await bot.player.getCurrentPosition();
 
@@ -116,6 +116,7 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
   return {
     location: determineLocation(position),
     position,
+    energy,
     emptyBuckets,
     waterBuckets,
     wheatSeeds,
@@ -126,6 +127,7 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
     ungrownPlots,
     unharvestedPlots,
     totalPlots: farmPlots.length,
+    inventory,
   };
 }
 
@@ -134,6 +136,9 @@ export async function logCurrentState(state: BotState): Promise<void> {
   console.log(`  Location: ${state.location}`);
   console.log(
     `  Position: (${state.position.x}, ${state.position.y}, ${state.position.z})`
+  );
+  console.log(
+    `  Energy: ${state.energy} (${(state.energy / MAX_ENERGY) * 100}%)`
   );
   console.log(`  Empty Buckets: ${state.emptyBuckets}`);
   console.log(`  Water Buckets: ${state.waterBuckets}`);

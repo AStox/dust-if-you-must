@@ -34,14 +34,11 @@ export class FarmingModule extends DustGameBase {
   }
 
   // Wet farmland with water (BucketSystem)
-  async wetFarmland(coord: Vec3): Promise<void> {
+  async wetFarmland(coord: Vec3, bucketSlot: number): Promise<void> {
     if (!isValidCoordinate(coord)) {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
     }
 
-    const bucketSlot = await this.inventory.getSlotForItemType(
-      getObjectIdByName("WaterBucket")!
-    );
     console.log(
       `🌾 Watering farmland at (${coord.x}, ${coord.y}, ${coord.z}) with bucket from slot ${bucketSlot}`
     );
@@ -97,10 +94,10 @@ export class FarmingModule extends DustGameBase {
 
   async plantSeedType(coord: Vec3, seedType: number): Promise<void> {
     const seedSlot = await this.inventory.getSlotForItemType(seedType);
-    if (seedSlot === -1) {
+    if (seedSlot[0] === 0) {
       throw new Error(`Seed type ${seedType} not found in inventory`);
     }
-    await this.plant(coord, seedSlot);
+    await this.plant(coord, seedSlot[0]);
   }
 
   async growSeed(coord: Vec3): Promise<void> {
@@ -161,7 +158,7 @@ export class FarmingModule extends DustGameBase {
     const fullyGrownAt = BigInt("0x" + fullyGrownAtHex);
 
     const currentTime = BigInt(Math.floor(Date.now() / 1000));
-    console.log("fullyGrownAt", fullyGrownAt, fullyGrownAt <= currentTime);
+    console.log("fullyGrown", fullyGrownAt <= currentTime);
     return fullyGrownAt <= currentTime;
   }
 }
