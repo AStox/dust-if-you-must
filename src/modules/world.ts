@@ -10,6 +10,8 @@ export class WorldModule extends DustGameBase {
   private ENTITY_ID_BITS = this.BYTES_32_BITS - this.ENTITY_TYPE_BITS; // 248n
   private VEC3_BITS = 96n;
 
+  public blockCache = new Map<string, { blockType: number; biome: number }>();
+
   // Entity Types enum (from original codebase)
   private EntityTypes = {
     Incremental: 0x00,
@@ -71,6 +73,11 @@ export class WorldModule extends DustGameBase {
     return this.encodeCoord(this.EntityTypes.Block, coord);
   }
 
+  invalidateBlockCache(coord: Vec3): void {
+    const key = `${coord.x},${coord.y},${coord.z}`;
+    this.blockCache.delete(key);
+  }
+
   async getObjectTypeAt(coord: Vec3): Promise<number> {
     const entityId = this.encodeBlock({ x: coord.x, y: coord.y, z: coord.z });
 
@@ -93,34 +100,136 @@ export class WorldModule extends DustGameBase {
     }
   }
 
-  async getGroundLevel(x: number, z: number, startY: number): Promise<number> {
-    const cache = new Map<string, number>();
-    const getCachedBlockType = async (coord: Vec3): Promise<number> => {
-      const key = `${coord.x},${coord.y},${coord.z}`;
-      if (cache.has(key)) {
-        return cache.get(key)!;
+  getCachedBlockType = async (coord: Vec3): Promise<number> => {
+    console.log("getting cached block type", coord);
+    const key = `${coord.x},${coord.y},${coord.z}`;
+    if (this.blockCache.has(key)) {
+      return this.blockCache.get(key)!.blockType;
+    }
+    const blockData = await this.getBlockData(coord);
+    this.blockCache.set(key, blockData);
+    return blockData.blockType;
+  };
+
+  getCachedBiome = async (coord: Vec3): Promise<number> => {
+    console.log("getting cached biome", coord);
+    const key = `${coord.x},${coord.y},${coord.z}`;
+    if (this.blockCache.has(key)) {
+      return this.blockCache.get(key)!.biome;
+    }
+    const blockData = await this.getBlockData(coord);
+    this.blockCache.set(key, blockData);
+    return blockData.biome;
+  };
+
+  getCachedBlockData = async (
+    coord: Vec3
+  ): Promise<{ blockType: number; biome: number }> => {
+    const key = `${coord.x},${coord.y},${coord.z}`;
+    if (this.blockCache.has(key)) {
+      return this.blockCache.get(key)!;
+    }
+    const blockData = await this.getBlockData(coord);
+    this.blockCache.set(key, blockData);
+    return blockData;
+  };
+
+  async getChunkBlocks(
+    position: Vec3
+  ): Promise<Map<string, { blockType: number; biome: number }>> {
+    console.log(
+      `🔍 Getting block data for chunk at [${position.x}, ${position.y}, ${position.z}]`
+    );
+    const chunkCoord = this.toChunkCoord(position);
+
+    const blockPromises = [];
+    const chunkBlocks = new Map<string, { blockType: number; biome: number }>();
+
+    for (let x = 0; x < this.CHUNK_SIZE; x++) {
+      for (let z = 0; z < this.CHUNK_SIZE; z++) {
+        for (let y = 0; y < this.CHUNK_SIZE; y++) {
+          const worldX = chunkCoord.x * this.CHUNK_SIZE + x;
+          const worldY = chunkCoord.y * this.CHUNK_SIZE + y;
+          const worldZ = chunkCoord.z * this.CHUNK_SIZE + z;
+          blockPromises.push(
+            this.getCachedBlockData({
+              x: worldX,
+              y: worldY,
+              z: worldZ,
+            }).then((blockData) => {
+              const key = `${worldX},${worldY},${worldZ}`;
+              chunkBlocks.set(key, blockData);
+              return blockData;
+            })
+          );
+        }
       }
-      const blockType = await this.getBlockType(coord);
-      cache.set(key, blockType);
-      return blockType;
-    };
+    }
 
-    // Scan from top to bottom to find ground level
-    for (let y = startY; y >= -100; y--) {
+    await Promise.all(blockPromises);
+    console.log(
+      `📦 Loaded ${chunkBlocks.size} blocks for chunk (${chunkCoord.x}, ${chunkCoord.y}, ${chunkCoord.z})`
+    );
+    return chunkBlocks;
+  }
+
+  async getGroundLevel(
+    x: number,
+    z: number,
+    startY: number,
+    batchSize: number = 10
+  ): Promise<number> {
+    console.log(
+      `🔍 Getting ground level at [${x}, ${z}, ${startY}] (batch size: ${batchSize})`
+    );
+
+    console.log("scanning for ground level");
+    // Scan from top to bottom in batches to find ground level
+    for (let batchStart = startY; batchStart >= -100; batchStart -= batchSize) {
+      const batchEnd = Math.max(batchStart - batchSize + 1, -100);
+
+      // Create array of y levels to fetch (including one extra below for the "below" check)
+      const yLevels: number[] = [];
+      for (let y = batchStart; y >= batchEnd - 1; y--) {
+        yLevels.push(y);
+      }
+
       try {
-        const currentType = await getCachedBlockType({ x, y, z });
-        const belowType = await getCachedBlockType({ x, y: y - 1, z });
+        // Fetch all blocks in this batch asynchronously
+        const blockPromises = yLevels.map((y) =>
+          this.getCachedBlockType({ x, y, z }).catch(() => null)
+        );
+        const blockTypes = await Promise.all(blockPromises);
 
-        // console.log(
-        //   `[${x}, ${y}, ${z}] Type: ${ObjectTypes[currentType].name}, typeBelow: ${ObjectTypes[belowType].name}`
-        // );
+        // Check each position in the batch for ground level
+        for (let i = 0; i < yLevels.length - 1; i++) {
+          const currentY = yLevels[i];
+          const currentType = blockTypes[i];
+          const belowType = blockTypes[i + 1];
 
-        // Ground level = passable block above solid block
-        if (this.isPassThrough(currentType) && !this.isPassThrough(belowType)) {
-          return y;
+          // Skip if we couldn't fetch either block type
+          if (currentType === null || belowType === null) {
+            continue;
+          }
+
+          console.log(
+            `[${x}, ${currentY}, ${z}] Type: ${ObjectTypes[currentType].name}, typeBelow: ${ObjectTypes[belowType].name}`
+          );
+
+          // Ground level = passable block above solid block
+          if (
+            this.isPassThrough(currentType) &&
+            !this.isPassThrough(belowType)
+          ) {
+            console.log(`✅ Found ground level at [${x}, ${currentY}, ${z}]`);
+            return currentY;
+          }
         }
       } catch (error) {
-        // Skip errors and continue scanning
+        // Skip errors and continue to next batch
+        console.log(
+          `⚠️ Error fetching batch starting at y=${batchStart}: ${error}`
+        );
         continue;
       }
     }
@@ -130,6 +239,30 @@ export class WorldModule extends DustGameBase {
 
   private isPassThrough(objectType: number): boolean {
     return ObjectTypes[objectType].passThrough;
+  }
+
+  public async getChunkGroundHeights(position: Vec3): Promise<Vec3[]> {
+    const chunkCoord = this.toChunkCoord(position);
+    const groundHeightPromises = [];
+
+    for (let x = 0; x < this.CHUNK_SIZE; x++) {
+      for (let z = 0; z < this.CHUNK_SIZE; z++) {
+        const worldX = chunkCoord.x * this.CHUNK_SIZE + x;
+        const worldZ = chunkCoord.z * this.CHUNK_SIZE + z;
+
+        groundHeightPromises.push(
+          this.getGroundLevel(worldX, worldZ, position.y + 10).then(
+            (groundHeight) => ({
+              x,
+              y: groundHeight,
+              z,
+            })
+          )
+        );
+      }
+    }
+
+    return Promise.all(groundHeightPromises);
   }
 
   CHUNK_SIZE = 16;
@@ -220,6 +353,13 @@ export class WorldModule extends DustGameBase {
 
   // Full implementation
   public async getBlockType(coord: Vec3): Promise<number> {
+    const blockData = await this.getBlockData(coord);
+    return blockData.blockType;
+  }
+
+  public async getBlockData(
+    coord: Vec3
+  ): Promise<{ blockType: number; biome: number }> {
     let blockType = 0;
     try {
       blockType = await this.getObjectTypeAt(coord);
@@ -227,12 +367,9 @@ export class WorldModule extends DustGameBase {
       console.log("No object type found, trying to get block type");
     }
 
-    if (blockType !== 0) {
-      return blockType;
-    }
-
     const worldAddress = this.worldContract.target as string;
     const provider = this.provider;
+
     // Step 1: Convert to chunk coordinate
     const chunkCoord = this.toChunkCoord(coord);
 
@@ -244,6 +381,20 @@ export class WorldModule extends DustGameBase {
       throw new Error("Chunk not explored");
     }
 
+    // Get biome data (byte at index 1 + DATA_OFFSET)
+    const biomeByteIndex = this.DATA_OFFSET + 1;
+    const biomeByte = code.slice(
+      2 + biomeByteIndex * 2,
+      2 + (biomeByteIndex + 1) * 2
+    );
+    const biome = parseInt(biomeByte, 16);
+
+    // If we got blockType from object type, return it with biome
+    if (blockType !== 0) {
+      return { blockType, biome };
+    }
+
+    // Otherwise, get block type from chunk data
     // Step 4: Calculate index and read block type
     const index = this.getBlockIndex(coord);
 
@@ -254,7 +405,9 @@ export class WorldModule extends DustGameBase {
       2 + (byteIndex + 1) * 2
     );
 
-    return parseInt(blockTypeByte, 16);
+    blockType = parseInt(blockTypeByte, 16);
+
+    return { blockType, biome };
   }
 
   async commitChunk(coord: Vec3): Promise<void> {

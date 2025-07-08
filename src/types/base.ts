@@ -11,6 +11,11 @@ export interface Vec3 {
   z: number;
 }
 
+export interface Vec2 {
+  x: number;
+  z: number;
+}
+
 export interface Position {
   x: number;
   y: number;

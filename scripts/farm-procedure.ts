@@ -26,13 +26,7 @@ async function main() {
   // Get the actual player state from game tables
   await bot.player.checkStatusAndActivate(bot);
 
-  // Utility-based main loop
-  let loopCount = 0;
-  const maxLoops = 50; // Safety limit
-
-  while (loopCount < maxLoops) {
-    loopCount++;
-
+  while (true) {
     // Assess current state
     bot.state = await assessCurrentState(bot);
     await logCurrentState(bot.state);
@@ -55,10 +49,6 @@ async function main() {
       console.error(error);
       throw error;
     }
-  }
-
-  if (loopCount >= maxLoops) {
-    console.error("❌ Loop limit reached - something may be wrong!");
   }
 }
 

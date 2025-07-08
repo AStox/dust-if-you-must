@@ -1,5 +1,5 @@
 import { DustGameBase, TransactionMonitor } from "../core/base.js";
-import { Vec3 } from "../types";
+import { Vec3, Vec2 } from "../types";
 import { packVec3, isValidCoordinate } from "../utils.js";
 import {
   withRetry,
@@ -9,11 +9,13 @@ import {
 import { ethers } from "ethers";
 import { PlayerModule } from "./player.js";
 import { WorldModule } from "./world.js";
+import { PathfindingModule } from "./pathfinding.js";
 
 export class MovementModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
   private player = new PlayerModule();
   private world = new WorldModule();
+  private pathfinding = new PathfindingModule();
 
   // Move from current position towards a target position
   async moveTowards(to: Vec3): Promise<void> {
@@ -206,5 +208,14 @@ export class MovementModule extends DustGameBase {
     console.log(
       `📍 Set initial position to spawn coordinate: (${spawnCoord.x}, ${spawnCoord.y}, ${spawnCoord.z})`
     );
+  }
+
+  // A* pathfinding to target Vec2 (x, z coordinates)
+  async pathTo(target: Vec2): Promise<void> {
+    // Get path from pathfinding module
+    const path = await this.pathfinding.pathTo(target);
+
+    // Execute path
+    await this.pathfinding.executePath(path);
   }
 }
