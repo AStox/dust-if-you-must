@@ -46,8 +46,6 @@ async function main() {
 
     // Use pathfinding to navigate to target
     await bot.movement.pathTo({ x, z });
-
-    console.log(`✅ Successfully reached target: [${x}, ${z}]`);
   } catch (error) {
     console.error(
       `❌ Failed to reach target: ${
