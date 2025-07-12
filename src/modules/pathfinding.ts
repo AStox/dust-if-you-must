@@ -11,6 +11,12 @@ interface PathNode {
   hCost: number; // Distance to target
   fCost: number; // Total cost
   parent: PathNode | null;
+  // Movement physics state tracking (matching MoveLib._computePathResult logic)
+  jumps: number; // Current jump count in this path
+  glides: number; // Current glide count in this path
+  fallHeight: number; // Current fall height in this path
+  hasGravity: boolean; // Whether this position has gravity applied
+  moveUnits: number; // Current move units used in this path segment
 }
 
 // Game constants (duplicated from Constants.sol since we can't import from @/dust/)
@@ -32,6 +38,7 @@ const DEBUG_COORDINATES: Vec3[] = [
   { x: -380, y: 78, z: 466 },
   { x: -381, y: 79, z: 466 },
   { x: -382, y: 77, z: 466 },
+  { x: -381, y: 78, z: 467 }, // User requested debugging for this coordinate
 ];
 
 interface BatchValidationResult {
@@ -461,13 +468,18 @@ export class PathfindingModule extends DustGameBase {
     let totalNeighborTime = 0;
     let totalBlockLookupTime = 0;
 
-    // Create start node
+    // Create start node with initial physics state
     const startNode: PathNode = {
       position: start,
       gCost: 0,
       hCost: this.calculateHeuristic(start, end),
       fCost: 0,
       parent: null,
+      jumps: 0,
+      glides: 0,
+      fallHeight: 0,
+      hasGravity: await this.hasGravity(start),
+      moveUnits: 0,
     };
     startNode.fCost = startNode.gCost + startNode.hCost;
 
@@ -507,16 +519,17 @@ export class PathfindingModule extends DustGameBase {
       ) {
         console.log(`🎯 Path found after ${iterationCount} iterations!`);
         console.log(
-          `⏱️ Total neighbor generation time: ${totalNeighborTime}ms`
+          `⏱️ Total neighbor generation + validation time: ${totalNeighborTime}ms`
         );
         console.log(`⏱️ Total block lookup time: ${totalBlockLookupTime}ms`);
         return this.reconstructPath(currentNode);
       }
 
-      // Get neighbors
+      // Get neighbors (with integrated validation)
       const neighborStartTime = Date.now();
       const neighbors = await this.getNeighbors(currentNode.position);
-      totalNeighborTime += Date.now() - neighborStartTime;
+      const neighborElapsed = Date.now() - neighborStartTime;
+      totalNeighborTime += neighborElapsed;
 
       for (const neighbor of neighbors) {
         const neighborKey = `${neighbor.x},${neighbor.y},${neighbor.z}`;
@@ -542,22 +555,183 @@ export class PathfindingModule extends DustGameBase {
         );
 
         if (!existingNode || gCost < existingNode.gCost) {
+          // Calculate physics state for this neighbor based on movement from current
+          const dy = neighbor.y - currentNode.position.y;
+          const neighborHasGravity = await this.hasGravity(neighbor);
+
+          const isDebugNeighbor = isDebugCoordinate(neighbor);
+          if (isDebugNeighbor) {
+            console.log(
+              `\n🔍 DEBUG PHYSICS: Processing node (${neighbor.x}, ${neighbor.y}, ${neighbor.z})`
+            );
+            console.log(
+              `   Parent: (${currentNode.position.x}, ${currentNode.position.y}, ${currentNode.position.z})`
+            );
+            console.log(
+              `   dy: ${dy}, neighborHasGravity: ${neighborHasGravity}, currentHasGravity: ${currentNode.hasGravity}`
+            );
+            console.log(
+              `   Current state - jumps: ${currentNode.jumps}, glides: ${currentNode.glides}, fallHeight: ${currentNode.fallHeight}, moveUnits: ${currentNode.moveUnits}`
+            );
+          }
+
+          // Apply MoveLib._computePathResult physics logic
+          let newJumps = currentNode.jumps;
+          let newGlides = currentNode.glides;
+          let newFallHeight = currentNode.fallHeight;
+          let newMoveUnits = currentNode.moveUnits;
+
+          // Physics state transitions based on smart contract logic
+          if (dy < 0 && currentNode.hasGravity) {
+            // For falls, increment fall height
+            newFallHeight++;
+            newGlides = 0; // Reset glides when falling
+
+            if (isDebugNeighbor) {
+              console.log(
+                `   📉 Fall detected - newFallHeight: ${newFallHeight}, newGlides reset to 0`
+              );
+            }
+
+            // SIMPLIFICATION RULE: Prevent dangerous falls > PLAYER_SAFE_FALL_DISTANCE = 3
+            // Check if this would create a dangerous fall when landing
+            if (!neighborHasGravity && newFallHeight > 3) {
+              if (isDebugNeighbor) {
+                console.log(
+                  `   ❌ REJECTED: Dangerous fall landing - fallHeight ${newFallHeight} > 3 (PLAYER_SAFE_FALL_DISTANCE)`
+                );
+              }
+              // This neighbor would result in landing after a dangerous fall - skip it
+              continue;
+            }
+          } else {
+            if (dy > 0) {
+              // Moving up - increment jumps
+              newJumps++;
+
+              if (isDebugNeighbor) {
+                console.log(`   ⬆️ Jump detected - newJumps: ${newJumps}`);
+              }
+
+              // SMART CONTRACT CONSTRAINT: Enforce MAX_PLAYER_JUMPS = 3
+              if (newJumps > 3) {
+                if (isDebugNeighbor) {
+                  console.log(
+                    `   ❌ REJECTED: Too many jumps - ${newJumps} > 3 (MAX_PLAYER_JUMPS)`
+                  );
+                }
+                // Skip this neighbor - exceeds jump limit
+                continue;
+              }
+            } else if (neighborHasGravity) {
+              // Moving horizontally/down with gravity at target - increment glides
+              newGlides++;
+
+              if (isDebugNeighbor) {
+                console.log(`   ➡️ Glide detected - newGlides: ${newGlides}`);
+              }
+
+              // SMART CONTRACT CONSTRAINT: Enforce MAX_PLAYER_GLIDES = 10
+              if (newGlides > 10) {
+                if (isDebugNeighbor) {
+                  console.log(
+                    `   ❌ REJECTED: Too many glides - ${newGlides} > 10 (MAX_PLAYER_GLIDES)`
+                  );
+                }
+                // Skip this neighbor - exceeds glide limit
+                continue;
+              }
+            }
+          }
+
+          // Reset physics state when landing on solid ground
+          if (!neighborHasGravity) {
+            if (isDebugNeighbor) {
+              console.log(
+                `   🎯 Landing on solid ground - resetting jumps(${newJumps}→0), glides(${newGlides}→0), fallHeight(${newFallHeight}→0)`
+              );
+            }
+            newJumps = 0;
+            newGlides = 0;
+            newFallHeight = 0;
+          }
+
+          // Add move units based on movement type
+          const moveCostUnits = await this.getMoveCostUnits(neighbor);
+          if (dy < 0 && currentNode.hasGravity) {
+            // For falls, only add move units if landing
+            if (!neighborHasGravity) {
+              newMoveUnits += moveCostUnits;
+              if (isDebugNeighbor) {
+                console.log(
+                  `   💧 Fall landing - adding ${moveCostUnits} move units (total: ${newMoveUnits})`
+                );
+              }
+            } else {
+              if (isDebugNeighbor) {
+                console.log(`   📉 Still falling - no move units added`);
+              }
+            }
+          } else {
+            // For normal movement (up/horizontal), add move units
+            newMoveUnits += moveCostUnits;
+            if (isDebugNeighbor) {
+              console.log(
+                `   🚶 Normal movement - adding ${moveCostUnits} move units (total: ${newMoveUnits})`
+              );
+            }
+          }
+
+          // SMART CONTRACT CONSTRAINT: Enforce MAX_MOVE_UNITS_PER_BLOCK = 1e18
+          if (newMoveUnits > MAX_MOVE_UNITS_PER_BLOCK) {
+            if (isDebugNeighbor) {
+              console.log(
+                `   ❌ REJECTED: Move unit limit exceeded - ${newMoveUnits} > ${MAX_MOVE_UNITS_PER_BLOCK} (MAX_MOVE_UNITS_PER_BLOCK)`
+              );
+            }
+            // Skip this neighbor - exceeds move unit limit
+            continue;
+          }
+
           const neighborNode: PathNode = {
             position: neighbor,
             gCost,
             hCost,
             fCost,
             parent: currentNode,
+            jumps: newJumps,
+            glides: newGlides,
+            fallHeight: newFallHeight,
+            hasGravity: neighborHasGravity,
+            moveUnits: newMoveUnits,
           };
+
+          if (isDebugNeighbor) {
+            console.log(`   ✅ ACCEPTED: Node created with final state:`);
+            console.log(
+              `      jumps: ${newJumps}, glides: ${newGlides}, fallHeight: ${newFallHeight}`
+            );
+            console.log(
+              `      moveUnits: ${newMoveUnits}, hasGravity: ${neighborHasGravity}`
+            );
+            console.log(
+              `      gCost: ${gCost}, hCost: ${hCost}, fCost: ${fCost}`
+            );
+          }
 
           if (!existingNode) {
             openSet.push(neighborNode);
           } else {
-            // Update existing node
+            // Update existing node with better path and physics state
             existingNode.gCost = gCost;
             existingNode.hCost = hCost;
             existingNode.fCost = fCost;
             existingNode.parent = currentNode;
+            existingNode.jumps = newJumps;
+            existingNode.glides = newGlides;
+            existingNode.fallHeight = newFallHeight;
+            existingNode.hasGravity = neighborHasGravity;
+            existingNode.moveUnits = newMoveUnits;
           }
         }
       }
@@ -572,7 +746,9 @@ export class PathfindingModule extends DustGameBase {
     }
 
     console.log(`❌ No path found after ${iterationCount} iterations`);
-    console.log(`⏱️ Total neighbor generation time: ${totalNeighborTime}ms`);
+    console.log(
+      `⏱️ Total neighbor generation + validation time: ${totalNeighborTime}ms`
+    );
     console.log(`⏱️ Total block lookup time: ${totalBlockLookupTime}ms`);
     return null;
   }
@@ -603,9 +779,9 @@ export class PathfindingModule extends DustGameBase {
     let chunksOutOfBounds = 0;
 
     for (const dir of directions) {
-      // Check movement within preloaded chunks to avoid cache misses
-      // Can go down 2 blocks or up 2 blocks
-      for (let yOffset = -2; yOffset <= 2; yOffset++) {
+      // SMART CONTRACT COMPLIANCE: Only consider neighbors within Chebyshev distance ≤ 1
+      // This means Y offset can only be -1, 0, or +1 (not ±2)
+      for (let yOffset = -1; yOffset <= 1; yOffset++) {
         const newPos = {
           x: pos.x + dir.x,
           y: pos.y + yOffset,
@@ -642,39 +818,53 @@ export class PathfindingModule extends DustGameBase {
       }
     }
 
-    const totalPossibleNeighbors = directions.length * 5; // 4 directions * 5 Y offsets each
+    const totalPossibleNeighbors = directions.length * 3; // 4 directions * 3 Y offsets each (-1, 0, +1)
 
-    // Validate all neighbors in parallel
-    const validationPromises = potentialNeighbors.map(async (newPos) => {
-      const isValid = await this.isValidMove(pos, newPos);
-      return { position: newPos, isValid };
-    });
+    // OPTIMIZATION: Inline validation to eliminate duplicate validation calls
+    const neighbors: Vec3[] = [];
+    const validationResults: {
+      position: Vec3;
+      isValid: boolean;
+      reason?: string;
+    }[] = [];
 
-    const validationResults = await Promise.all(validationPromises);
+    // Process each potential neighbor with smart contract compliant validation
+    for (const newPos of potentialNeighbors) {
+      const isDebugNeighbor = isDebugCoordinate(newPos);
 
-    // Debug logging for validation results
-    if (anyDebugCoords) {
-      console.log(
-        `🔍 DEBUG NEIGHBORS: Validation results for ${potentialNeighbors.length} potential neighbors:`
-      );
-      validationResults.forEach((result) => {
-        const isDebugNeighbor = isDebugCoordinate(result.position);
-        if (isDebugNeighbor) {
-          console.log(
-            `🔍 DEBUG NEIGHBORS: ${result.isValid ? "✅" : "❌"} (${
-              result.position.x
-            }, ${result.position.y}, ${result.position.z}) - ${
-              result.isValid ? "VALID" : "INVALID"
-            }`
-          );
-        }
+      // Use exact MoveLib._requireValidMove validation
+      const validation = await this.requireValidMove(pos, newPos);
+      const isValid = validation.isValid;
+      const failureReason = validation.reason || "";
+
+      // Store validation result for debugging
+      validationResults.push({
+        position: newPos,
+        isValid,
+        reason: failureReason,
       });
+
+      // Add to valid neighbors list
+      if (isValid) {
+        neighbors.push(newPos);
+      }
+
+      // Debug logging for this neighbor
+      if (isDebugNeighbor) {
+        console.log(
+          `🔍 DEBUG NEIGHBORS: ${isValid ? "✅" : "❌"} (${newPos.x}, ${
+            newPos.y
+          }, ${newPos.z}) - ${isValid ? "VALID" : `INVALID: ${failureReason}`}`
+        );
+      }
     }
 
-    // Filter to only valid neighbors
-    const neighbors = validationResults
-      .filter((result) => result.isValid)
-      .map((result) => result.position);
+    // Debug logging summary
+    if (anyDebugCoords) {
+      console.log(
+        `🔍 DEBUG NEIGHBORS: Inline validation processed ${potentialNeighbors.length} potential neighbors, ${neighbors.length} valid`
+      );
+    }
 
     if (neighbors.length === 0) {
       console.log(
@@ -701,31 +891,22 @@ export class PathfindingModule extends DustGameBase {
     return neighbors;
   }
 
-  // Check if a move is valid according to the rules
-  private async isValidMove(from: Vec3, to: Vec3): Promise<boolean> {
+  // Smart Contract Compliant: Check if a move is valid according to exact MoveLib.sol rules
+  // Implements MoveLib._requireValidMove() logic precisely
+  private async requireValidMove(
+    from: Vec3,
+    to: Vec3
+  ): Promise<{ isValid: boolean; reason?: string }> {
     const isDebug = isDebugCoordinate(to);
 
     if (isDebug) {
       console.log(
-        `\n🔍 DEBUG: Validating move from (${from.x}, ${from.y}, ${from.z}) to (${to.x}, ${to.y}, ${to.z})`
+        `\n🔍 DEBUG: MoveLib validation from (${from.x}, ${from.y}, ${from.z}) to (${to.x}, ${to.y}, ${to.z})`
       );
     }
 
-    // SAFETY CHECK: Ensure all coordinates we'll access are in preloaded chunks
-    // This should never fail if getNeighbors() is working correctly, but it's a safety net
-    if (!this.areAllValidationCoordsPreloaded(to)) {
-      if (isDebug) {
-        console.log(
-          `🔍 DEBUG: ❌ FAILED - Required validation coordinates not in preloaded chunks`
-        );
-      }
-      console.error(
-        `🚨 CRITICAL BUG: isValidMove called with coordinate (${to.x}, ${to.y}, ${to.z}) that requires non-preloaded chunks!`
-      );
-      return false;
-    }
-
-    // Check Chebyshev distance (max 1 block in any direction per move)
+    // 1. EXACT SMART CONTRACT RULE: require(baseOldCoord.inSurroundingCube(baseNewCoord, 1))
+    // This is the Chebyshev distance validation from Vec3.sol
     const chebyshevDistance = Math.max(
       Math.abs(to.x - from.x),
       Math.abs(to.y - from.y),
@@ -733,103 +914,107 @@ export class PathfindingModule extends DustGameBase {
     );
 
     if (chebyshevDistance > 1) {
+      const reason = `New coord is too far from old coord (Chebyshev distance ${chebyshevDistance} > 1)`;
       if (isDebug) {
-        console.log(
-          `🔍 DEBUG: ❌ FAILED - Chebyshev distance ${chebyshevDistance} > 1`
-        );
+        console.log(`🔍 DEBUG: ❌ FAILED - ${reason}`);
       }
-      return false;
+      return { isValid: false, reason };
     }
 
     if (isDebug) {
-      console.log(`🔍 DEBUG: ✅ Chebyshev distance OK (${chebyshevDistance})`);
-    }
-
-    // Additional checks for vertical movement limits
-    // Check jump height (max 1 block up per move due to Chebyshev constraint)
-    if (to.y - from.y > 1) {
-      if (isDebug) {
-        console.log(`🔍 DEBUG: ❌ FAILED - Jump height ${to.y - from.y} > 1`);
-      }
-      return false;
-    }
-
-    // Check drop height (max 1 block down per move due to Chebyshev constraint)
-    if (from.y - to.y > 1) {
-      if (isDebug) {
-        console.log(`🔍 DEBUG: ❌ FAILED - Drop height ${from.y - to.y} > 1`);
-      }
-      return false;
-    }
-
-    if (isDebug) {
-      console.log(`🔍 DEBUG: ✅ Jump/drop height OK (dy: ${to.y - from.y})`);
-    }
-
-    // CRITICAL: Validate all player body coordinates are passable
-    const bodyValidation = await this.validatePlayerBodyCoordinates(to);
-    if (!bodyValidation.isValid) {
-      if (isDebug) {
-        console.log(
-          `🔍 DEBUG: ❌ FAILED - Player body validation: ${bodyValidation.reason}`
-        );
-      }
-      return false;
-    }
-
-    if (isDebug) {
-      console.log(`🔍 DEBUG: ✅ Player body validation passed`);
-    }
-
-    // Check if target position is lava
-    const toBlockType = await this.getCachedBlockType(to);
-    if (toBlockType === 111) {
-      if (isDebug) {
-        console.log(
-          `🔍 DEBUG: ❌ FAILED - Target is lava (block type ${toBlockType})`
-        );
-      }
-      return false;
-    }
-
-    if (isDebug) {
-      console.log(`🔍 DEBUG: ✅ Target not lava (block type ${toBlockType})`);
-    }
-
-    // Check if there's solid ground below (within 2 blocks)
-    const groundPos = { x: to.x, y: to.y - 1, z: to.z };
-    const groundBlockType = await this.getCachedBlockType(groundPos);
-    if (ObjectTypes[groundBlockType]?.passThrough) {
-      // Check one more block down
-      const lowerGroundPos = { x: to.x, y: to.y - 2, z: to.z };
-      const lowerGroundBlockType = await this.getCachedBlockType(
-        lowerGroundPos
+      console.log(
+        `🔍 DEBUG: ✅ inSurroundingCube check passed (distance ${chebyshevDistance})`
       );
-      if (ObjectTypes[lowerGroundBlockType]?.passThrough) {
-        if (isDebug) {
-          console.log(`🔍 DEBUG: ❌ FAILED - No solid ground within 2 blocks`);
-          console.log(
-            `🔍 DEBUG:   Ground-1 (${groundPos.x}, ${groundPos.y}, ${groundPos.z}): type ${groundBlockType}, passThrough: ${ObjectTypes[groundBlockType]?.passThrough}`
-          );
-          console.log(
-            `🔍 DEBUG:   Ground-2 (${lowerGroundPos.x}, ${lowerGroundPos.y}, ${lowerGroundPos.z}): type ${lowerGroundBlockType}, passThrough: ${ObjectTypes[lowerGroundBlockType]?.passThrough}`
-          );
+    }
+
+    // 2. EXACT SMART CONTRACT RULE: Get player body coordinates
+    // Vec3[] memory newPlayerCoords = ObjectTypes.Player.getRelativeCoords(baseNewCoord);
+    // Player body coordinates are base (x,y,z) and head (x,y+1,z) - exactly 2 blocks
+    const playerBodyCoords = [
+      { x: to.x, y: to.y, z: to.z }, // Base coordinate
+      { x: to.x, y: to.y + 1, z: to.z }, // Head coordinate
+    ];
+
+    if (isDebug) {
+      console.log(
+        `🔍 DEBUG: Checking ${playerBodyCoords.length} player body coordinates`
+      );
+    }
+
+    // 3. EXACT SMART CONTRACT RULE: For each player body coordinate
+    for (let i = 0; i < playerBodyCoords.length; i++) {
+      const playerCoord = playerBodyCoords[i];
+      const coordName = i === 0 ? "base" : "head";
+
+      if (isDebug) {
+        console.log(
+          `🔍 DEBUG: Validating ${coordName} coord (${playerCoord.x}, ${playerCoord.y}, ${playerCoord.z})`
+        );
+      }
+
+      // 3a. EXACT SMART CONTRACT RULE: ObjectType newObjectType = EntityUtils.safeGetObjectTypeAt(newCoord);
+      // This enforces chunk exploration requirement - chunks must be explored for safeGetObjectTypeAt to work
+      let objectType: number;
+      try {
+        objectType = await this.getCachedBlockType(playerCoord);
+
+        // Check if we're accessing unexplored chunks (cache miss would indicate this)
+        // In smart contract, safeGetObjectTypeAt reverts if chunk not explored
+        if (!this.areAllValidationCoordsPreloaded(playerCoord)) {
+          const reason = `Chunk not preloaded yet for ${coordName} coordinate (${playerCoord.x}, ${playerCoord.y}, ${playerCoord.z})`;
+          if (isDebug) {
+            console.log(`🔍 DEBUG: ❌ FAILED - ${reason}`);
+          }
+          return { isValid: false, reason };
         }
-        return false; // No solid ground within 2 blocks
+      } catch (error) {
+        const reason = `Failed to get object type for ${coordName} coordinate (${playerCoord.x}, ${playerCoord.y}, ${playerCoord.z}): ${error}`;
+        if (isDebug) {
+          console.log(`🔍 DEBUG: ❌ FAILED - ${reason}`);
+        }
+        return { isValid: false, reason };
+      }
+
+      // 3b. EXACT SMART CONTRACT RULE: if (!newObjectType.isPassThrough()) { revert NonPassableBlock(...) }
+      // Check if the object type is passable
+      if (!ObjectTypes[objectType]?.passThrough) {
+        const reason = `Non-passable block at ${coordName} coordinate (${playerCoord.x}, ${playerCoord.y}, ${playerCoord.z}) - object type ${objectType}`;
+        if (isDebug) {
+          console.log(`🔍 DEBUG: ❌ FAILED - ${reason}`);
+        }
+        return { isValid: false, reason };
+      }
+
+      // 3c. SMART CONTRACT RULE (DEFERRED): require(!EntityUtils.getMovableEntityAt(newCoord)._exists(), "Cannot move through a player");
+      // This checks for player collision - we're deferring this for initial implementation
+      if (isDebug) {
+        console.log(
+          `🔍 DEBUG: ✅ ${coordName} coord passed (object type ${objectType}, passThrough: true)`
+        );
       }
     }
 
-    if (isDebug) {
-      console.log(`🔍 DEBUG: ✅ Ground support OK`);
-      console.log(
-        `🔍 DEBUG:   Ground-1 (${groundPos.x}, ${groundPos.y}, ${groundPos.z}): type ${groundBlockType}, passThrough: ${ObjectTypes[groundBlockType]?.passThrough}`
-      );
-      console.log(
-        `🔍 DEBUG: ✅ MOVE VALIDATION PASSED - (${to.x}, ${to.y}, ${to.z}) is valid!`
-      );
+    // 4. SIMPLIFICATION RULE: Prevent falls > PLAYER_SAFE_FALL_DISTANCE (3 blocks)
+    // This is our simplification instead of calculating fall damage
+    const fallHeight = from.y - to.y;
+    if (fallHeight > 3) {
+      // PLAYER_SAFE_FALL_DISTANCE = 3 from Constants.sol
+      const reason = `Fall too dangerous: ${fallHeight} blocks > safe fall distance (3)`;
+      if (isDebug) {
+        console.log(`🔍 DEBUG: ❌ FAILED - ${reason}`);
+      }
+      return { isValid: false, reason };
     }
 
-    return true;
+    if (isDebug && fallHeight > 0) {
+      console.log(`🔍 DEBUG: ✅ Fall distance OK (${fallHeight} <= 3)`);
+    }
+
+    if (isDebug) {
+      console.log(`🔍 DEBUG: ✅ MoveLib._requireValidMove validation PASSED`);
+    }
+
+    return { isValid: true };
   }
 
   // Get cached block type with fallback
@@ -1312,17 +1497,26 @@ export class PathfindingModule extends DustGameBase {
     return { isValid: true };
   }
 
-  // Check if gravity applies at a coordinate
+  // Smart Contract Compliant: Check if gravity applies at a coordinate
+  // Implements MoveLib._gravityApplies() logic precisely
   private async hasGravity(coord: Vec3): Promise<boolean> {
     const belowCoord = { x: coord.x, y: coord.y - 1, z: coord.z };
-    const belowBlockType = await this.getCachedBlockType(belowCoord);
 
-    // Gravity applies if the block below is passthrough and not fluid
+    // 1. EXACT SMART CONTRACT RULE: EntityUtils.safeGetObjectTypeAt(belowCoord).isPassThrough()
+    const belowBlockType = await this.getCachedBlockType(belowCoord);
     const belowIsPassthrough =
       ObjectTypes[belowBlockType]?.passThrough || false;
-    const belowIsFluid = await this.isFluid(belowCoord);
 
-    return belowIsPassthrough && !belowIsFluid;
+    // 2. SMART CONTRACT RULE (DEFERRED): !EntityUtils.getMovableEntityAt(belowCoord)._exists()
+    // This checks for player collision below - we're deferring this for initial implementation
+    const noMovableEntityBelow = true; // Deferred
+
+    // 3. EXACT SMART CONTRACT RULE: !_isFluid(playerCoord)
+    // Note: Smart contract checks fluid at CURRENT position, not below
+    const notInFluid = !(await this.isFluid(coord));
+
+    // Gravity applies when all conditions are met
+    return belowIsPassthrough && noMovableEntityBelow && notInFluid;
   }
 
   // Check if a coordinate contains fluid
