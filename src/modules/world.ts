@@ -101,7 +101,6 @@ export class WorldModule extends DustGameBase {
   }
 
   getCachedBlockType = async (coord: Vec3): Promise<number> => {
-    console.log("getting cached block type", coord);
     const key = `${coord.x},${coord.y},${coord.z}`;
     if (this.blockCache.has(key)) {
       return this.blockCache.get(key)!.blockType;
@@ -137,9 +136,6 @@ export class WorldModule extends DustGameBase {
   async getChunkBlocks(
     position: Vec3
   ): Promise<Map<string, { blockType: number; biome: number }>> {
-    console.log(
-      `🔍 Getting block data for chunk at [${position.x}, ${position.y}, ${position.z}]`
-    );
     const chunkCoord = this.toChunkCoord(position);
 
     const blockPromises = [];
@@ -211,10 +207,6 @@ export class WorldModule extends DustGameBase {
           if (currentType === null || belowType === null) {
             continue;
           }
-
-          console.log(
-            `[${x}, ${currentY}, ${z}] Type: ${ObjectTypes[currentType].name}, typeBelow: ${ObjectTypes[belowType].name}`
-          );
 
           // Ground level = passable block above solid block
           if (

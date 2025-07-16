@@ -229,7 +229,7 @@ export class InventoryModule extends DustGameBase {
     const position = await this.world.getPositionOfEntity(entityId);
     const packed = packVec3({
       x: position.x,
-      y: position.y + 1,
+      y: position.y,
       z: position.z,
     });
 
