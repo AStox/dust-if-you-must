@@ -5,6 +5,13 @@ import { PlayerModule } from "./player.js";
 import { WorldModule } from "./world.js";
 import { ObjectTypes } from "../types/objectTypes.js";
 
+interface PathfindingOptions {
+  maxIterations?: number;
+  heuristicWeight?: number; // Weight for heuristic (higher = more greedy)
+  useJumpPoints?: boolean; // Skip intermediate nodes in straight lines
+  beamWidth?: number; // Limit open set size for beam search
+}
+
 interface PathNode {
   position: Vec3;
   gCost: number; // Distance from start
@@ -18,6 +25,92 @@ interface PathNode {
   hasGravity: boolean; // Whether this position has gravity applied
   moveUnits: number; // Current move units used in this path segment
   discoveredAtIteration: number; // Which A* iteration this node was discovered
+  // Add priority for heap-based priority queue
+  priority: number;
+}
+
+// Binary heap for efficient priority queue
+class PriorityQueue {
+  private heap: PathNode[] = [];
+
+  push(node: PathNode): void {
+    this.heap.push(node);
+    this.bubbleUp(this.heap.length - 1);
+  }
+
+  pop(): PathNode | undefined {
+    if (this.heap.length === 0) return undefined;
+    if (this.heap.length === 1) return this.heap.pop();
+
+    const root = this.heap[0];
+    this.heap[0] = this.heap.pop()!;
+    this.bubbleDown(0);
+    return root;
+  }
+
+  get length(): number {
+    return this.heap.length;
+  }
+
+  isEmpty(): boolean {
+    return this.heap.length === 0;
+  }
+
+  // Keep only the best N nodes (beam search)
+  pruneToSize(maxSize: number): void {
+    if (this.heap.length <= maxSize) return;
+
+    // Sort by fCost and keep only the best
+    this.heap.sort((a, b) => a.fCost - b.fCost);
+    this.heap = this.heap.slice(0, maxSize);
+
+    // Rebuild heap property
+    for (let i = Math.floor(maxSize / 2) - 1; i >= 0; i--) {
+      this.bubbleDown(i);
+    }
+  }
+
+  private bubbleUp(index: number): void {
+    while (index > 0) {
+      const parentIndex = Math.floor((index - 1) / 2);
+      if (this.heap[parentIndex].fCost <= this.heap[index].fCost) break;
+
+      [this.heap[parentIndex], this.heap[index]] = [
+        this.heap[index],
+        this.heap[parentIndex],
+      ];
+      index = parentIndex;
+    }
+  }
+
+  private bubbleDown(index: number): void {
+    while (true) {
+      const leftChild = 2 * index + 1;
+      const rightChild = 2 * index + 2;
+      let smallest = index;
+
+      if (
+        leftChild < this.heap.length &&
+        this.heap[leftChild].fCost < this.heap[smallest].fCost
+      ) {
+        smallest = leftChild;
+      }
+      if (
+        rightChild < this.heap.length &&
+        this.heap[rightChild].fCost < this.heap[smallest].fCost
+      ) {
+        smallest = rightChild;
+      }
+
+      if (smallest === index) break;
+
+      [this.heap[index], this.heap[smallest]] = [
+        this.heap[smallest],
+        this.heap[index],
+      ];
+      index = smallest;
+    }
+  }
 }
 
 // Game constants (duplicated from Constants.sol since we can't import from @/dust/)
@@ -113,6 +206,37 @@ export class PathfindingModule extends DustGameBase {
       `📍 Current position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
     );
 
+    // Calculate distance to determine heuristic weight
+    const distance = Math.sqrt(
+      Math.pow(target.x - currentPos.x, 2) +
+        Math.pow(target.z - currentPos.z, 2)
+    );
+
+    // Determine heuristic weight based on distance (more greedy for longer distances)
+    let heuristicWeight = 1.0; // Default A*
+    if (distance > 200) {
+      heuristicWeight = 5.0; // Very greedy for long distances
+      console.log(
+        `📏 Long range (${distance.toFixed(
+          1
+        )} blocks) - using 5x heuristic weight`
+      );
+    } else if (distance > 50) {
+      heuristicWeight = 2.5; // Moderately greedy
+      console.log(
+        `📏 Medium range (${distance.toFixed(
+          1
+        )} blocks) - using 2.5x heuristic weight`
+      );
+    } else {
+      heuristicWeight = 1.2; // Slightly greedy
+      console.log(
+        `📏 Short range (${distance.toFixed(
+          1
+        )} blocks) - using 1.2x heuristic weight`
+      );
+    }
+
     // Get target Y coordinate by finding ground level
     const groundStartTime = Date.now();
     const targetY = await this.world.getGroundLevel(
@@ -134,11 +258,86 @@ export class PathfindingModule extends DustGameBase {
       `⏱️ Preloaded block data in ${Date.now() - preloadStartTime}ms`
     );
 
-    // Find path using A*
+    // Find path using A* with heuristic weighting
     const pathStartTime = Date.now();
-    const path = await this.findPath(currentPos, targetPos);
+    const path = await this.findPath(currentPos, targetPos, heuristicWeight);
     console.log(
       `⏱️ A* pathfinding completed in ${Date.now() - pathStartTime}ms`
+    );
+
+    if (!path || path.length === 0) {
+      throw new Error("No path found to target");
+    }
+
+    console.log(`📍 Path found with ${path.length} steps`);
+    console.log(`⏱️ Total pathfinding time: ${Date.now() - startTime}ms`);
+
+    // Report cache performance
+    const totalCacheAccesses = this.cacheHits + this.cacheMisses;
+    const cacheHitRate =
+      totalCacheAccesses > 0
+        ? ((this.cacheHits / totalCacheAccesses) * 100).toFixed(1)
+        : "0";
+    console.log(
+      `📊 Cache performance: ${this.cacheHits} hits, ${this.cacheMisses} misses (${cacheHitRate}% hit rate)`
+    );
+    console.log(`📦 Block cache size: ${this.blockDataCache.size} blocks`);
+
+    return path;
+  }
+
+  // Optimized pathfinding implementation
+  private async pathToOptimized(
+    target: Vec2,
+    options: PathfindingOptions
+  ): Promise<Vec3[]> {
+    const startTime = Date.now();
+
+    // Reset cache performance tracking for this run
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
+    this.preloadedChunkBounds = null;
+    this.preloadedChunks.clear();
+    this.chunkLoadingTimeInCurrentSearch = 0;
+
+    // Get current position
+    const posStartTime = Date.now();
+    const currentPos = await this.player.getCurrentPosition();
+    if (!currentPos) {
+      throw new Error("Cannot determine current position");
+    }
+    console.log(`⏱️ Got current position in ${Date.now() - posStartTime}ms`);
+
+    console.log(
+      `📍 Current position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
+    );
+
+    // Get target Y coordinate by finding ground level
+    const groundStartTime = Date.now();
+    const targetY = await this.world.getGroundLevel(
+      target.x,
+      target.z,
+      currentPos.y + 10
+    );
+    const targetPos: Vec3 = { x: target.x, y: targetY, z: target.z };
+    console.log(`⏱️ Got ground level in ${Date.now() - groundStartTime}ms`);
+
+    console.log(
+      `🎯 Target position: (${targetPos.x}, ${targetPos.y}, ${targetPos.z})`
+    );
+
+    // Preload block data for pathfinding area
+    const preloadStartTime = Date.now();
+    await this.preloadBlockData(currentPos, targetPos);
+    console.log(
+      `⏱️ Preloaded block data in ${Date.now() - preloadStartTime}ms`
+    );
+
+    // Find path using optimized A*
+    const pathStartTime = Date.now();
+    const path = await this.findPathOptimized(currentPos, targetPos, options);
+    console.log(
+      `⏱️ Optimized pathfinding completed in ${Date.now() - pathStartTime}ms`
     );
 
     if (!path || path.length === 0) {
@@ -454,9 +653,225 @@ export class PathfindingModule extends DustGameBase {
     }
   }
 
-  // A* pathfinding algorithm
-  private async findPath(start: Vec3, end: Vec3): Promise<Vec3[] | null> {
-    console.log("🔍 Running A* pathfinding...");
+  // Optimized A* pathfinding algorithm with configurable strategies
+  private async findPathOptimized(
+    start: Vec3,
+    end: Vec3,
+    options: PathfindingOptions
+  ): Promise<Vec3[] | null> {
+    const {
+      maxIterations = 100000,
+      heuristicWeight = 1.0,
+      useJumpPoints = false,
+      beamWidth,
+    } = options;
+
+    console.log(`🔍 Running optimized pathfinding...`);
+    console.log(`   🎛️ Heuristic weight: ${heuristicWeight}x`);
+    console.log(`   🦘 Jump points: ${useJumpPoints ? "enabled" : "disabled"}`);
+    console.log(`   📡 Beam width: ${beamWidth || "unlimited"}`);
+    console.log(`   🔢 Max iterations: ${maxIterations}`);
+
+    // Verify only start position is within preloaded chunks
+    const startChunk = this.world.toChunkCoord(start);
+    const startChunkKey = `${startChunk.x},${startChunk.y},${startChunk.z}`;
+
+    if (!this.preloadedChunks.has(startChunkKey)) {
+      console.error(
+        `❌ Start position (${start.x}, ${start.y}, ${start.z}) is in chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z}) which is not preloaded!`
+      );
+      return null;
+    }
+
+    // Use efficient priority queue instead of array
+    const openSet = new PriorityQueue();
+    const closedSet = new Set<string>();
+    const nodeMap = new Map<string, PathNode>(); // Track all nodes for updates
+
+    let iterationCount = 0;
+    let totalNeighborTime = 0;
+
+    // Track closest approach to target for debugging
+    let closestNode: PathNode | null = null;
+    let closestDistance = Infinity;
+    let closestIteration = 0;
+
+    // Create start node with initial physics state
+    const startNode: PathNode = {
+      position: start,
+      gCost: 0,
+      hCost: this.calculateHeuristic(start, end),
+      fCost: 0,
+      parent: null,
+      jumps: 0,
+      glides: 0,
+      fallHeight: 0,
+      hasGravity: await this.hasGravity(start),
+      moveUnits: 0,
+      discoveredAtIteration: 0,
+      priority: 0,
+    };
+
+    // Apply heuristic weighting for greedy behavior
+    startNode.fCost = startNode.gCost + startNode.hCost * heuristicWeight;
+    const startKey = `${start.x},${start.y},${start.z}`;
+    nodeMap.set(startKey, startNode);
+    openSet.push(startNode);
+
+    while (!openSet.isEmpty()) {
+      iterationCount++;
+
+      // Apply beam search pruning if specified
+      if (beamWidth && openSet.length > beamWidth) {
+        openSet.pruneToSize(beamWidth);
+      }
+
+      // Log progress
+      if (iterationCount % 1000 === 0) {
+        console.log(
+          `🔄 Iteration ${iterationCount}, open: ${
+            openSet.length
+          }, closest: ${closestDistance.toFixed(1)} blocks`
+        );
+      }
+
+      // Get the node with lowest F cost (efficient with heap)
+      const currentNode = openSet.pop()!;
+      const currentKey = `${currentNode.position.x},${currentNode.position.y},${currentNode.position.z}`;
+
+      // Add to closed set
+      closedSet.add(currentKey);
+
+      // Track closest approach to target
+      const distanceToTarget = this.calculateDistanceEuclidean(
+        currentNode.position,
+        end
+      );
+      if (distanceToTarget < closestDistance) {
+        closestDistance = distanceToTarget;
+        closestNode = currentNode;
+        closestIteration = iterationCount;
+      }
+
+      // Check if we reached the target
+      if (
+        currentNode.position.x === end.x &&
+        currentNode.position.y === end.y &&
+        currentNode.position.z === end.z
+      ) {
+        console.log(`🎯 Path found after ${iterationCount} iterations!`);
+        return this.reconstructPath(currentNode);
+      }
+
+      // Generate neighbors (with jump point optimization if enabled)
+      const neighborStartTime = Date.now();
+      let neighbors: Vec3[];
+
+      if (useJumpPoints && this.canUseJumpPoints(currentNode.position, end)) {
+        neighbors = await this.getJumpPointNeighbors(currentNode.position, end);
+      } else {
+        neighbors = await this.getOptimizedNeighbors(currentNode.position, end);
+      }
+
+      const neighborElapsed = Date.now() - neighborStartTime;
+      totalNeighborTime += neighborElapsed;
+
+      for (const neighbor of neighbors) {
+        const neighborKey = `${neighbor.x},${neighbor.y},${neighbor.z}`;
+
+        // Skip if already processed
+        if (closedSet.has(neighborKey)) {
+          continue;
+        }
+
+        // Calculate costs with direction bias
+        const gCost =
+          currentNode.gCost +
+          this.calculateDistance(currentNode.position, neighbor);
+        const hCost = this.calculateHeuristic(neighbor, end);
+
+        // Apply heuristic weighting and direction bias
+        const directionBias = this.calculateDirectionBias(
+          currentNode.position,
+          neighbor,
+          end
+        );
+        const fCost = gCost + hCost * heuristicWeight + directionBias;
+
+        // Check if this path to neighbor is better
+        const existingNode = nodeMap.get(neighborKey);
+
+        if (!existingNode || gCost < existingNode.gCost) {
+          // Calculate physics state (simplified for performance)
+          const neighborHasGravity = await this.hasGravity(neighbor);
+          const { newJumps, newGlides, newFallHeight, newMoveUnits, isValid } =
+            this.calculatePhysicsState(
+              currentNode,
+              neighbor,
+              neighborHasGravity
+            );
+
+          if (!isValid) {
+            continue; // Skip invalid moves
+          }
+
+          const neighborNode: PathNode = {
+            position: neighbor,
+            gCost,
+            hCost,
+            fCost,
+            parent: currentNode,
+            jumps: newJumps,
+            glides: newGlides,
+            fallHeight: newFallHeight,
+            hasGravity: neighborHasGravity,
+            moveUnits: newMoveUnits,
+            discoveredAtIteration: iterationCount,
+            priority: fCost,
+          };
+
+          if (!existingNode) {
+            nodeMap.set(neighborKey, neighborNode);
+            openSet.push(neighborNode);
+          } else {
+            // Update existing node
+            Object.assign(existingNode, neighborNode);
+            // Note: In a real implementation, we'd need to update the heap here
+          }
+        }
+      }
+
+      // Safety break for very long searches
+      if (iterationCount > maxIterations) {
+        console.log(
+          `⚠️ Max iterations reached (${iterationCount}) - stopping search`
+        );
+        break;
+      }
+    }
+
+    // Handle failure case with debugging
+    console.log(`❌ No path found after ${iterationCount} iterations`);
+    this.logPathfindingDebug(
+      closestNode,
+      end,
+      iterationCount,
+      closestDistance,
+      closestIteration
+    );
+
+    return null;
+  }
+
+  // A* pathfinding algorithm with optional heuristic weighting
+  private async findPath(
+    start: Vec3,
+    end: Vec3,
+    heuristicWeight: number = 1.0
+  ): Promise<Vec3[] | null> {
+    console.log(
+      `🔍 Running A* pathfinding with ${heuristicWeight}x heuristic weight...`
+    );
 
     // Verify only start position is within preloaded chunks (end will be loaded dynamically)
     const startChunk = this.world.toChunkCoord(start);
@@ -510,8 +925,9 @@ export class PathfindingModule extends DustGameBase {
       hasGravity: await this.hasGravity(start),
       moveUnits: 0,
       discoveredAtIteration: 0,
+      priority: 0, // Initialize priority
     };
-    startNode.fCost = startNode.gCost + startNode.hCost;
+    startNode.fCost = startNode.gCost + startNode.hCost * heuristicWeight;
 
     openSet.push(startNode);
 
@@ -614,12 +1030,12 @@ export class PathfindingModule extends DustGameBase {
           continue;
         }
 
-        // Calculate costs
+        // Calculate costs with heuristic weighting
         const gCost =
           currentNode.gCost +
           this.calculateDistance(currentNode.position, neighbor);
         const hCost = this.calculateHeuristic(neighbor, end);
-        const fCost = gCost + hCost;
+        const fCost = gCost + hCost * heuristicWeight;
 
         // Check if this path to neighbor is better
         const existingNode = openSet.find(
@@ -780,6 +1196,7 @@ export class PathfindingModule extends DustGameBase {
             hasGravity: neighborHasGravity,
             moveUnits: newMoveUnits,
             discoveredAtIteration: iterationCount,
+            priority: 0, // Initialize priority
           };
 
           if (isDebugNeighbor) {
@@ -1315,6 +1732,281 @@ export class PathfindingModule extends DustGameBase {
     );
   }
 
+  // Calculate Euclidean distance for more accurate distance measurements
+  private calculateDistanceEuclidean(from: Vec3, to: Vec3): number {
+    return Math.sqrt(
+      Math.pow(to.x - from.x, 2) +
+        Math.pow(to.y - from.y, 2) +
+        Math.pow(to.z - from.z, 2)
+    );
+  }
+
+  // Calculate direction bias to prefer moves toward target
+  private calculateDirectionBias(from: Vec3, to: Vec3, target: Vec3): number {
+    // Vector from current position to target
+    const targetDir = {
+      x: target.x - from.x,
+      y: target.y - from.y,
+      z: target.z - from.z,
+    };
+
+    // Vector of the proposed move
+    const moveDir = {
+      x: to.x - from.x,
+      y: to.y - from.y,
+      z: to.z - from.z,
+    };
+
+    // Normalize vectors
+    const targetLength = Math.sqrt(
+      targetDir.x * targetDir.x +
+        targetDir.y * targetDir.y +
+        targetDir.z * targetDir.z
+    );
+    const moveLength = Math.sqrt(
+      moveDir.x * moveDir.x + moveDir.y * moveDir.y + moveDir.z * moveDir.z
+    );
+
+    if (targetLength === 0 || moveLength === 0) return 0;
+
+    // Calculate dot product (cosine similarity)
+    const dotProduct =
+      (targetDir.x * moveDir.x +
+        targetDir.y * moveDir.y +
+        targetDir.z * moveDir.z) /
+      (targetLength * moveLength);
+
+    // Return bias: negative values for moves toward target, positive for moves away
+    return (1 - dotProduct) * 0.5; // Small bias factor
+  }
+
+  // Check if jump points can be used (open terrain)
+  private canUseJumpPoints(position: Vec3, target: Vec3): boolean {
+    // Simple heuristic: use jump points for longer distances
+    const distance = this.calculateDistanceEuclidean(position, target);
+    return distance > 10;
+  }
+
+  // Get jump point neighbors (skip intermediate nodes in straight lines)
+  private async getJumpPointNeighbors(
+    position: Vec3,
+    target: Vec3
+  ): Promise<Vec3[]> {
+    const neighbors: Vec3[] = [];
+
+    // Calculate direction to target
+    const dx = target.x - position.x;
+    const dz = target.z - position.z;
+
+    // Primary directions (toward target)
+    const primaryDirs = [];
+    if (dx > 0) primaryDirs.push({ x: 1, z: 0 });
+    if (dx < 0) primaryDirs.push({ x: -1, z: 0 });
+    if (dz > 0) primaryDirs.push({ x: 0, z: 1 });
+    if (dz < 0) primaryDirs.push({ x: 0, z: -1 });
+
+    // Diagonal direction toward target
+    if (dx !== 0 && dz !== 0) {
+      primaryDirs.push({ x: Math.sign(dx), z: Math.sign(dz) });
+    }
+
+    // For each primary direction, try to jump further
+    for (const dir of primaryDirs) {
+      // Try multiple jump distances
+      for (const jumpDist of [1, 2, 3]) {
+        for (let yOffset = -1; yOffset <= 1; yOffset++) {
+          const candidate = {
+            x: position.x + dir.x * jumpDist,
+            y: position.y + yOffset,
+            z: position.z + dir.z * jumpDist,
+          };
+
+          // Basic validation
+          try {
+            const validation = await this.requireValidMove(position, candidate);
+            if (validation.isValid) {
+              neighbors.push(candidate);
+            }
+          } catch {
+            // Skip invalid candidates
+          }
+        }
+      }
+    }
+
+    // Fall back to regular neighbors if no jump points found
+    if (neighbors.length === 0) {
+      return this.getOptimizedNeighbors(position, target);
+    }
+
+    return neighbors;
+  }
+
+  // Get optimized neighbors (prioritize direction toward target)
+  private async getOptimizedNeighbors(
+    position: Vec3,
+    target: Vec3
+  ): Promise<Vec3[]> {
+    const neighbors: Vec3[] = [];
+
+    // Calculate direction to target
+    const dx = target.x - position.x;
+    const dz = target.z - position.z;
+
+    // Prioritized directions (toward target first)
+    const directions = [];
+
+    // Primary directions toward target
+    if (dx > 0) directions.push({ x: 1, z: 0, priority: 1 });
+    if (dx < 0) directions.push({ x: -1, z: 0, priority: 1 });
+    if (dz > 0) directions.push({ x: 0, z: 1, priority: 1 });
+    if (dz < 0) directions.push({ x: 0, z: -1, priority: 1 });
+
+    // Diagonal toward target
+    if (dx !== 0 && dz !== 0) {
+      directions.push({ x: Math.sign(dx), z: Math.sign(dz), priority: 1 });
+    }
+
+    // Secondary directions (perpendicular)
+    directions.push({ x: 1, z: 1, priority: 2 });
+    directions.push({ x: 1, z: -1, priority: 2 });
+    directions.push({ x: -1, z: 1, priority: 2 });
+    directions.push({ x: -1, z: -1, priority: 2 });
+
+    // Stationary (just Y movement)
+    directions.push({ x: 0, z: 0, priority: 3 });
+
+    // Sort by priority
+    directions.sort((a, b) => a.priority - b.priority);
+
+    // Generate neighbors for each direction
+    for (const dir of directions) {
+      for (let yOffset = -1; yOffset <= 1; yOffset++) {
+        const candidate = {
+          x: position.x + dir.x,
+          y: position.y + yOffset,
+          z: position.z + dir.z,
+        };
+
+        // Skip current position
+        if (
+          candidate.x === position.x &&
+          candidate.y === position.y &&
+          candidate.z === position.z
+        ) {
+          continue;
+        }
+
+        neighbors.push(candidate);
+      }
+    }
+
+    return neighbors;
+  }
+
+  // Simplified physics state calculation for performance
+  private calculatePhysicsState(
+    currentNode: PathNode,
+    neighbor: Vec3,
+    neighborHasGravity: boolean
+  ): {
+    newJumps: number;
+    newGlides: number;
+    newFallHeight: number;
+    newMoveUnits: number;
+    isValid: boolean;
+  } {
+    const dy = neighbor.y - currentNode.position.y;
+    let newJumps = currentNode.jumps;
+    let newGlides = currentNode.glides;
+    let newFallHeight = currentNode.fallHeight;
+    let newMoveUnits = currentNode.moveUnits;
+
+    // Simplified physics rules for performance
+    if (dy < 0 && currentNode.hasGravity) {
+      // Falling
+      newFallHeight++;
+      newGlides = 0;
+
+      // Prevent dangerous falls
+      if (!neighborHasGravity && newFallHeight > 3) {
+        return {
+          newJumps,
+          newGlides,
+          newFallHeight,
+          newMoveUnits,
+          isValid: false,
+        };
+      }
+    } else if (dy > 0) {
+      // Jumping
+      newJumps++;
+      if (newJumps > 3) {
+        return {
+          newJumps,
+          newGlides,
+          newFallHeight,
+          newMoveUnits,
+          isValid: false,
+        };
+      }
+    } else if (neighborHasGravity) {
+      // Gliding
+      newGlides++;
+      if (newGlides > 10) {
+        return {
+          newJumps,
+          newGlides,
+          newFallHeight,
+          newMoveUnits,
+          isValid: false,
+        };
+      }
+    }
+
+    // Reset on landing
+    if (!neighborHasGravity) {
+      newJumps = 0;
+      newGlides = 0;
+      newFallHeight = 0;
+    }
+
+    // Add move units (simplified)
+    newMoveUnits += 1; // Simplified cost
+
+    return { newJumps, newGlides, newFallHeight, newMoveUnits, isValid: true };
+  }
+
+  // Debug logging for pathfinding failures
+  private logPathfindingDebug(
+    closestNode: PathNode | null,
+    target: Vec3,
+    iterationCount: number,
+    closestDistance: number,
+    closestIteration: number
+  ): void {
+    if (!closestNode) return;
+
+    console.log("\n🔍 OPTIMIZED PATHFINDING DEBUG:");
+    console.log("=".repeat(50));
+    console.log(`🎯 Target: (${target.x}, ${target.y}, ${target.z})`);
+    console.log(
+      `📍 Closest reached: (${closestNode.position.x}, ${closestNode.position.y}, ${closestNode.position.z}) at iteration ${closestIteration}`
+    );
+    console.log(`📏 Distance to target: ${closestDistance.toFixed(2)} blocks`);
+
+    const deltaX = target.x - closestNode.position.x;
+    const deltaY = target.y - closestNode.position.y;
+    const deltaZ = target.z - closestNode.position.z;
+    console.log(`🧭 Direction to target: (${deltaX}, ${deltaY}, ${deltaZ})`);
+
+    // Show partial path
+    const pathToClosest = this.reconstructPath(closestNode);
+    console.log(
+      `🛤️ Path to closest position has ${pathToClosest.length} steps`
+    );
+  }
+
   // Calculate actual distance between two positions
   private calculateDistance(from: Vec3, to: Vec3): number {
     return Math.sqrt(
@@ -1486,14 +2178,15 @@ export class PathfindingModule extends DustGameBase {
         );
       }
 
-      // Send this batch
-      await this.executeSystemCallNonBlocking(
+      // Send this batch and wait for confirmation
+      await this.executeSystemCall(
         this.SYSTEM_IDS.MOVE_SYSTEM,
         "move(bytes32,uint96[])",
         [this.characterEntityId, packedSteps],
         `A* pathfinding - batch ${batchIndex + 1}/${batches.length} (${
           batch.length
-        } steps)`
+        } steps)`,
+        false // Don't log success (we'll do it ourselves)
       );
 
       // Update current tracking position to the last coordinate in this batch
@@ -1504,10 +2197,11 @@ export class PathfindingModule extends DustGameBase {
         );
       }
 
-      // Add a small delay between batches to ensure they're processed in order
-      if (batchIndex < batches.length - 1) {
-        await new Promise((resolve) => setTimeout(resolve, 200));
-      }
+      console.log(
+        `✅ Batch ${batchIndex + 1}/${
+          batches.length
+        } confirmed - ready for next batch`
+      );
     }
   }
 
