@@ -6,6 +6,9 @@
   "scripts": {
     "start": "tsx src/index.ts",
     "test": "tsx src/test-setup.ts",
+    "test:behavior": "tsx src/modules/behaviour/behaviorSystem.test.ts",
+    "test:behavior-mode": "tsx src/modules/behaviour/behaviorMode.test.ts",
+    "test:behavior-registry": "tsx src/modules/behaviour/behaviorRegistry.test.ts",
     "build": "tsc",
     "dev": "tsx --watch src/index.ts",
     "farm": "tsx scripts/farm-procedure.ts",

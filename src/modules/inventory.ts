@@ -10,6 +10,39 @@ export class InventoryModule extends DustGameBase {
     this.world = new WorldModule();
   }
 
+  // Get maximum stack size for an item type
+  private getMaxStackSize(itemType: number): number {
+    // Get the item name to determine stack size
+    const bucketId = getObjectIdByName("Bucket");
+    const waterBucketId = getObjectIdByName("WaterBucket");
+
+    // Tools and equipment typically don't stack (max size = 1)
+    const nonStackableItems = new Set([
+      bucketId, // Empty buckets
+      waterBucketId, // Water buckets
+      // Add other tools/equipment as needed
+      32768, // WoodenPick
+      32769, // CopperPick
+      32770, // IronPick
+      32771, // GoldPick
+      32772, // DiamondPick
+      32773, // NeptuniumPick
+      32774, // WoodenAxe
+      32775, // CopperAxe
+      32776, // IronAxe
+      32777, // GoldAxe
+      32778, // DiamondAxe
+      32779, // NeptuniumAxe
+      32780, // WoodenWhacker
+      32781, // CopperWhacker
+      32782, // IronWhacker
+      32783, // WoodenHoe
+    ]);
+
+    // Return 1 for non-stackable items, 99 for stackable items
+    return nonStackableItems.has(itemType) ? 1 : 99;
+  }
+
   // Get inventory slot contents
   async getInventorySlot(
     slot: number,
@@ -171,25 +204,63 @@ export class InventoryModule extends DustGameBase {
     amountRemaining = amount;
     const targetSlots: [number, number][] = []; // [slotIndex, amountToAdd]
 
-    // First, try to fill existing slots up to 99
+    // Get max stack size for this item type
+    const maxStackSize = this.getMaxStackSize(itemType);
+    console.log(`📏 Item type ${itemType} has max stack size: ${maxStackSize}`);
+
+    // First, try to fill existing slots up to maxStackSize
     for (const [slotIndex, currentAmount] of existingToSlots) {
-      if (currentAmount < 99 && amountRemaining > 0) {
-        const spaceAvailable = 99 - currentAmount;
+      if (currentAmount < maxStackSize && amountRemaining > 0) {
+        const spaceAvailable = maxStackSize - currentAmount;
         const amountToAdd = Math.min(spaceAvailable, amountRemaining);
         targetSlots.push([slotIndex, amountToAdd]);
         amountRemaining -= amountToAdd;
+        console.log(
+          `  📦 Using existing slot ${slotIndex}: adding ${amountToAdd} (${currentAmount} + ${amountToAdd} = ${
+            currentAmount + amountToAdd
+          }/${maxStackSize})`
+        );
       }
     }
 
-    // If we still have amount remaining, use empty slots
-    while (amountRemaining > 0) {
-      const emptySlot = await this.getEmptySlot(toEntityId);
-      if (emptySlot === -1) {
-        throw new Error("No empty slot found! No space in inventory!");
+    // If we still have amount remaining, find and allocate empty slots
+    if (amountRemaining > 0) {
+      console.log(
+        `  🔍 Need ${amountRemaining} more items, finding empty slots...`
+      );
+
+      // Get all empty slots upfront
+      const emptySlots: number[] = [];
+      for (let slot = 0; slot < 40; slot++) {
+        const slotContents = await this.getInventorySlot(slot, toEntityId);
+        if (slotContents?.itemType === 0) {
+          emptySlots.push(slot);
+        }
       }
-      const amountForSlot = Math.min(99, amountRemaining);
-      targetSlots.push([emptySlot, amountForSlot]);
-      amountRemaining -= amountForSlot;
+
+      console.log(
+        `  📋 Found ${emptySlots.length} empty slots: [${emptySlots
+          .slice(0, 10)
+          .join(", ")}${emptySlots.length > 10 ? "..." : ""}]`
+      );
+
+      let emptySlotIndex = 0;
+      while (amountRemaining > 0 && emptySlotIndex < emptySlots.length) {
+        const emptySlot = emptySlots[emptySlotIndex];
+        const amountForSlot = Math.min(maxStackSize, amountRemaining);
+        targetSlots.push([emptySlot, amountForSlot]);
+        amountRemaining -= amountForSlot;
+        console.log(
+          `  📦 Using empty slot ${emptySlot}: adding ${amountForSlot}/${maxStackSize}`
+        );
+        emptySlotIndex++;
+      }
+
+      if (amountRemaining > 0) {
+        throw new Error(
+          `No empty slots available! Need ${amountRemaining} more space but only found ${emptySlots.length} empty slots.`
+        );
+      }
     }
 
     // Calculate individual transfers [fromSlot, toSlot, amount]

@@ -46,6 +46,8 @@ export class DustBot {
       ungrownPlots: 0,
       unharvestedPlots: 0,
       totalPlots: 0,
+      inventory: [],
+      chestInventory: [],
     };
     console.log("✅ All modules initialized!");
   }

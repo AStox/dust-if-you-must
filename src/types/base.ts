@@ -64,6 +64,7 @@ export interface BotState {
   unharvestedPlots: number;
   totalPlots: number;
   inventory: InventoryItem[];
+  chestInventory: InventoryItem[];
 }
 
 export interface UtilityAction {
