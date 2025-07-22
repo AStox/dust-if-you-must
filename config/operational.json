@@ -1,0 +1,84 @@
+{
+  "version": "1.0.0",
+  "name": "Default DUST Farm Configuration",
+  "description": "Default operational configuration for DUST AI agent farming operations. This includes the standard farm area, water collection points, and storage configurations.",
+  "areas": {
+    "farming": {
+      "farmCenter": {
+        "x": -401,
+        "y": 72,
+        "z": 483
+      },
+      "farmBounds": {
+        "corner1": {
+          "x": -405,
+          "y": 72,
+          "z": 479
+        },
+        "corner2": {
+          "x": -398,
+          "y": 72,
+          "z": 486
+        }
+      },
+      "waterSource": {
+        "x": -444,
+        "y": 62,
+        "z": 489
+      },
+      "coastPosition": {
+        "x": -443,
+        "y": 63,
+        "z": 489
+      },
+      "housePosition": {
+        "x": -401,
+        "y": 72,
+        "z": 489
+      }
+    },
+    "energize": {
+      "treeFarmBounds": {
+        "corner1": {
+          "x": -407,
+          "y": 78,
+          "z": 460
+        },
+        "corner2": {
+          "x": -386,
+          "y": 78,
+          "z": 430
+        }
+      },
+      "powerStoneLocation": {
+        "x": -398,
+        "y": 72,
+        "z": 490
+      }
+    }
+  },
+  "entities": {
+    "chests": {
+      "rightChest": "0x03fffffe7300000049000001e300000000000000000000000000000000000000"
+    },
+    "forceFields": {
+      "primaryForceField": "0x03fffffe7300000048000001ea00000000000000000000000000000000000000"
+    },
+    "powerStones": {
+      "powerStone": "0x03fffffe7400000049000001ea00000000000000000000000000000000000000"
+    }
+  },
+  "parameters": {
+    "locationThreshold": 1,
+    "farming": {
+      "targetBuckets": 34,
+      "targetSeeds": 99,
+      "targetWheat": 99,
+      "lowEnergyThreshold": 0.15
+    },
+    "energize": {
+      "targetBatteries": 99,
+      "treeChopRadius": 8
+    }
+  }
+}

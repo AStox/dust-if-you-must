@@ -2,9 +2,9 @@
 import * as dotenv from "dotenv";
 import { DustBot } from "../src/index.js";
 import {
-  FarmingMode,
-  logFarmingState,
-} from "../src/modules/behaviour/farmingMode.js";
+  EnergizeMode,
+  logEnergizeState,
+} from "../src/modules/behaviour/energizeMode.js";
 import { executeBehaviorCycle } from "../src/modules/behaviour/decision.js";
 import { loadOperationalConfig } from "../src/config/loader.js";
 
@@ -17,11 +17,14 @@ async function main() {
       configPath: "./config/operational.json",
       validateSchema: true,
       allowEnvironmentOverrides: true,
-      requireEnergizeAreas: false,
+      requireEnergizeAreas: true, // Energize areas are required for this script
     });
+    console.log("✅ Configuration loaded successfully");
   } catch (error) {
     console.error("❌ Failed to load configuration:", error);
-    console.error("💡 Make sure config/operational.json exists and is valid");
+    console.error(
+      "💡 Make sure config/operational.json has energize areas configured"
+    );
     process.exit(1);
   }
 
@@ -39,7 +42,7 @@ async function main() {
   // Get the actual player state from game tables
   await bot.player.checkStatusAndActivate(bot);
 
-  const farmingMode = new FarmingMode();
+  const energizeMode = new EnergizeMode();
 
   let cycleCount = 0;
 
@@ -48,12 +51,12 @@ async function main() {
     console.log(`\n📊 === Behavior Cycle ${cycleCount} ===`);
 
     try {
-      await executeBehaviorCycle(bot, [farmingMode]);
+      await executeBehaviorCycle(bot, [energizeMode]);
 
       if (cycleCount % 5 === 0) {
-        console.log("\n📈 === Detailed Farming State (Every 5 cycles) ===");
-        const farmingState = await farmingMode.assessState(bot);
-        await logFarmingState(farmingState);
+        console.log("\n📈 === Detailed Energize State (Every 5 cycles) ===");
+        const energizeState = await energizeMode.assessState(bot);
+        await logEnergizeState(energizeState);
       }
     } catch (error) {
       console.error(`❌ Error in behavior cycle ${cycleCount}:`, error);
@@ -61,8 +64,8 @@ async function main() {
   }
 }
 
-// Run the farming procedure
+// Run the energize procedure
 main().catch((error) => {
-  console.error("💥 Fatal error in farming procedure:", error);
+  console.error("💥 Fatal error in energize procedure:", error);
   process.exit(1);
 });

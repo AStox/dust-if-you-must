@@ -14,22 +14,72 @@ import {
   growSeededFarmPlots,
   transferToFromChest,
 } from "./operations.js";
+import { getOperationalConfig } from "../../config/loader.js";
+import { position3DToVec3 } from "../../config/types.js";
 
 // Farming-specific constants
 export const MAX_ENERGY: number = 817600000000000000;
 export const DEFAULT_OPERATION_DELAY = 4000; // milliseconds
 
-// Farming area locations
+/**
+ * Get farming areas from configuration
+ */
+export function getFarmingAreas() {
+  const config = getOperationalConfig();
+  const farming = config.areas.farming;
+
+  return {
+    coastPosition: position3DToVec3(farming.coastPosition),
+    waterPosition: position3DToVec3(farming.waterSource),
+    farmCenter: position3DToVec3(farming.farmCenter),
+    housePosition: position3DToVec3(farming.housePosition),
+    farmCorner1: position3DToVec3(farming.farmBounds.corner1),
+    farmCorner2: position3DToVec3(farming.farmBounds.corner2),
+  };
+}
+
+/**
+ * Get entity IDs from configuration
+ */
+export function getEntityIds() {
+  const config = getOperationalConfig();
+  return {
+    rightChestEntityId: config.entities.chests.rightChest,
+    leftChestEntityId: config.entities.chests.leftChest,
+  };
+}
+
+/**
+ * Get farming parameters from configuration
+ */
+export function getFarmingParameters() {
+  const config = getOperationalConfig();
+  return {
+    locationThreshold: config.parameters.locationThreshold,
+    targetBuckets: config.parameters.farming.targetBuckets,
+    targetSeeds: config.parameters.farming.targetSeeds,
+    targetWheat: config.parameters.farming.targetWheat,
+    lowEnergyThreshold: config.parameters.farming.lowEnergyThreshold,
+  };
+}
+
+// Legacy exports for backward compatibility (deprecated)
+/** @deprecated Use getFarmingAreas().coastPosition instead */
 export const coastPosition: Vec3 = { x: -443, y: 63, z: 489 };
+/** @deprecated Use getFarmingAreas().waterPosition instead */
 export const waterPosition: Vec3 = { x: -444, y: 62, z: 489 };
+/** @deprecated Use getFarmingAreas().farmCenter instead */
 export const farmCenter: Vec3 = { x: -401, y: 72, z: 483 }; // Also chest position
+/** @deprecated Use getEntityIds().rightChestEntityId instead */
 export const rightChestEntityId: EntityId =
   "0x03fffffe7300000049000001e300000000000000000000000000000000000000";
+/** @deprecated Use getFarmingAreas().housePosition instead */
 export const housePosition: Vec3 = { x: -401, y: 72, z: 489 };
+/** @deprecated Use getFarmingAreas().farmCorner1 instead */
 export const farmCorner1: Vec3 = { x: -405, y: 72, z: 479 };
+/** @deprecated Use getFarmingAreas().farmCorner2 instead */
 export const farmCorner2: Vec3 = { x: -398, y: 72, z: 486 };
-
-// Thresholds
+/** @deprecated Use getFarmingParameters().locationThreshold instead */
 export const LOCATION_THRESHOLD = 1; // blocks
 
 // Utility Functions
@@ -44,9 +94,12 @@ function calculateDistance(pos1: Vec3, pos2: Vec3): number {
 function determineFarmingLocation(
   position: Vec3
 ): "coast" | "house" | "farm" | "unknown" {
-  const distanceToCoast = calculateDistance(position, coastPosition);
-  const distanceToHouse = calculateDistance(position, housePosition);
-  const distanceToFarm = calculateDistance(position, farmCenter);
+  const areas = getFarmingAreas();
+  const params = getFarmingParameters();
+
+  const distanceToCoast = calculateDistance(position, areas.coastPosition);
+  const distanceToHouse = calculateDistance(position, areas.housePosition);
+  const distanceToFarm = calculateDistance(position, areas.farmCenter);
 
   const distances = [
     { location: "coast" as const, distance: distanceToCoast },
@@ -58,7 +111,7 @@ function determineFarmingLocation(
     current.distance < min.distance ? current : min
   );
 
-  if (closest.distance <= LOCATION_THRESHOLD) return closest.location;
+  if (closest.distance <= params.locationThreshold) return closest.location;
 
   return "unknown";
 }
@@ -129,8 +182,9 @@ export class FarmingMode extends BaseBehaviorMode {
         return 9998; // High priority for growing
       },
       execute: async (bot) => {
-        const farmCornerTopLeft = farmCorner1;
-        const farmCornerBotRight = farmCorner2;
+        const areas = getFarmingAreas();
+        const farmCornerTopLeft = areas.farmCorner1;
+        const farmCornerBotRight = areas.farmCorner2;
         const farmCornerBotLeft = {
           x: farmCornerTopLeft.x,
           y: farmCornerTopLeft.y,
@@ -162,8 +216,9 @@ export class FarmingMode extends BaseBehaviorMode {
         return 9999; // Highest priority - harvest when ready
       },
       execute: async (bot) => {
-        const farmCornerTopLeft = farmCorner1;
-        const farmCornerBotRight = farmCorner2;
+        const areas = getFarmingAreas();
+        const farmCornerTopLeft = areas.farmCorner1;
+        const farmCornerBotRight = areas.farmCorner2;
         const farmCornerBotLeft = {
           x: farmCornerTopLeft.x,
           y: farmCornerTopLeft.y,
@@ -192,6 +247,7 @@ export class FarmingMode extends BaseBehaviorMode {
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         let score = 0;
+        const params = getFarmingParameters();
 
         // Calculate chest inventory counts for smarter scoring
         const bucketId = getObjectIdByName("Bucket")!;
@@ -211,21 +267,27 @@ export class FarmingMode extends BaseBehaviorMode {
           .reduce((acc, item) => acc + item.amount, 0);
 
         // High priority for getting essential items (only if they're available in chest)
-        if (state.emptyBuckets < 34 && bucketsInChest > 0) {
+        if (state.emptyBuckets < params.targetBuckets && bucketsInChest > 0) {
           const bucketsNeeded = Math.min(
-            34 - state.emptyBuckets,
+            params.targetBuckets - state.emptyBuckets,
             bucketsInChest
           );
           score += bucketsNeeded * 3; // Buckets are critical
         }
 
-        if (state.wheatSeeds < 99 && seedsInChest > 0) {
-          const seedsNeeded = Math.min(99 - state.wheatSeeds, seedsInChest);
+        if (state.wheatSeeds < params.targetSeeds && seedsInChest > 0) {
+          const seedsNeeded = Math.min(
+            params.targetSeeds - state.wheatSeeds,
+            seedsInChest
+          );
           score += seedsNeeded * 1; // Seeds needed for planting
         }
 
-        if (state.wheat < 99 && wheatInChest > 0) {
-          const wheatNeeded = Math.min(99 - state.wheat, wheatInChest);
+        if (state.wheat < params.targetWheat && wheatInChest > 0) {
+          const wheatNeeded = Math.min(
+            params.targetWheat - state.wheat,
+            wheatInChest
+          );
           score += wheatNeeded * 0.5; // Wheat useful for slop
         }
 
@@ -269,9 +331,10 @@ export class FarmingMode extends BaseBehaviorMode {
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         let score = 15;
+        const areas = getFarmingAreas();
         const distanceFromCoast = calculateDistance(
           state.position,
-          coastPosition
+          areas.coastPosition
         );
         score -= distanceFromCoast * 0.1; // Prefer shorter trips
 
@@ -292,7 +355,11 @@ export class FarmingMode extends BaseBehaviorMode {
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         let score = 0;
-        const distanceFromFarm = calculateDistance(state.position, farmCenter);
+        const areas = getFarmingAreas();
+        const distanceFromFarm = calculateDistance(
+          state.position,
+          areas.farmCenter
+        );
         score -= distanceFromFarm * 0.1; // Prefer shorter trips
         score += state.waterBuckets * 2; // Higher priority with more water
         return score;
@@ -306,11 +373,13 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "EAT",
       canExecute: (state) => {
+        const params = getFarmingParameters();
         const hasSlop = state.slop > 0;
-        const lowEnergy = state.energy / MAX_ENERGY < 0.25;
+        const lowEnergy = state.energy / MAX_ENERGY < params.lowEnergyThreshold;
         const energyPercent = ((state.energy / MAX_ENERGY) * 100).toFixed(1);
+        const thresholdPercent = (params.lowEnergyThreshold * 100).toFixed(0);
         console.log(
-          `    🍽️ EAT: slop=${state.slop} (>0=${hasSlop}), energy=${energyPercent}% (<25%=${lowEnergy})`
+          `    🍽️ EAT: slop=${state.slop} (>0=${hasSlop}), energy=${energyPercent}% (<${thresholdPercent}%=${lowEnergy})`
         );
         return hasSlop && lowEnergy;
       },
@@ -346,12 +415,16 @@ export class FarmingMode extends BaseBehaviorMode {
         console.log(
           "🧭 Agent is in unknown location, using pathfinding to get to farm center..."
         );
+        const areas = getFarmingAreas();
         console.log(
-          `🎯 Navigating to farm center: (${farmCenter.x}, ${farmCenter.z})`
+          `🎯 Navigating to farm center: (${areas.farmCenter.x}, ${areas.farmCenter.z})`
         );
 
         try {
-          await bot.movement.pathTo({ x: farmCenter.x, z: farmCenter.z });
+          await bot.movement.pathTo({
+            x: areas.farmCenter.x,
+            z: areas.farmCenter.z,
+          });
           console.log("✅ Successfully reached farm center area");
         } catch (error) {
           console.error("❌ Failed to reach farm center:", error);
@@ -428,19 +501,11 @@ export class FarmingMode extends BaseBehaviorMode {
     const energy = Number(await bot.player.getPlayerEnergy());
     const position = await bot.player.getCurrentPosition();
 
-    // Debug object IDs
-    console.log("\n🏷️ Object ID mappings:");
     const bucketId = getObjectIdByName("Bucket");
     const waterBucketId = getObjectIdByName("WaterBucket");
     const wheatSeedId = getObjectIdByName("WheatSeed");
     const wheatId = getObjectIdByName("Wheat");
     const slopId = getObjectIdByName("WheatSlop");
-
-    console.log(`  Bucket ID: ${bucketId}`);
-    console.log(`  WaterBucket ID: ${waterBucketId}`);
-    console.log(`  WheatSeed ID: ${wheatSeedId}`);
-    console.log(`  Wheat ID: ${wheatId}`);
-    console.log(`  WheatSlop ID: ${slopId}`);
 
     const emptyBuckets = inventory.filter(
       (item) => item.type === bucketId
@@ -483,7 +548,10 @@ export class FarmingMode extends BaseBehaviorMode {
 
     // Fetch chest inventory for better action decisions
     console.log("\n📦 Checking chest inventory...");
-    const chestInventory = await bot.inventory.getInventory(rightChestEntityId);
+    const entityIds = getEntityIds();
+    const chestInventory = await bot.inventory.getInventory(
+      entityIds.rightChestEntityId
+    );
 
     const bucketsInChest = chestInventory
       .filter((item) => item.type === bucketId)

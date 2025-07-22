@@ -166,7 +166,9 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
   let ungrownPlots = 0;
   let unharvestedPlots = 0;
 
-  for (const plot of farmPlots) {
+  // TODO: do each plot in parallel
+  // Process all plots in parallel
+  const plotPromises = farmPlots.map(async (plot) => {
     const type = await bot.world.getBlockType(plot);
     const typeAbove = await bot.world.getBlockType({
       x: plot.x,
@@ -174,14 +176,21 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
       z: plot.z,
     });
 
+    const result = {
+      unwateredPlots: 0,
+      unharvestedPlots: 0,
+      unseededPlots: 0,
+      ungrownPlots: 0,
+    };
+
     if (type === getObjectIdByName("Farmland")!) {
-      unwateredPlots++;
+      result.unwateredPlots++;
       if (typeAbove === getObjectIdByName("Wheat")!) {
-        unharvestedPlots++;
+        result.unharvestedPlots++;
       }
     } else if (type === getObjectIdByName("WetFarmland")!) {
       if (typeAbove === getObjectIdByName("Air")!) {
-        unseededPlots++;
+        result.unseededPlots++;
       } else if (typeAbove === getObjectIdByName("WheatSeed")!) {
         const isReadyToGrow = await bot.farming.isPlantReadyToGrow({
           x: plot.x,
@@ -189,10 +198,22 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
           z: plot.z,
         });
         if (isReadyToGrow) {
-          ungrownPlots++;
+          result.ungrownPlots++;
         }
       }
     }
+
+    return result;
+  });
+
+  const plotResults = await Promise.all(plotPromises);
+
+  // Aggregate results
+  for (const result of plotResults) {
+    unwateredPlots += result.unwateredPlots;
+    unharvestedPlots += result.unharvestedPlots;
+    unseededPlots += result.unseededPlots;
+    ungrownPlots += result.ungrownPlots;
   }
 
   return {
@@ -210,6 +231,7 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
     unharvestedPlots,
     totalPlots: farmPlots.length,
     inventory: baseState.inventory,
+    chestInventory: baseState.inventory,
   };
 }
 

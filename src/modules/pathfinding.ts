@@ -192,6 +192,7 @@ export class PathfindingModule extends DustGameBase {
     this.preloadedChunks.clear();
     this.chunkLoadingTimeInCurrentSearch = 0;
 
+    console.log("=".repeat(60));
     console.log(`🎯 Starting A* pathfinding to (${target.x}, ${target.z})`);
 
     // Get current position
@@ -200,7 +201,6 @@ export class PathfindingModule extends DustGameBase {
     if (!currentPos) {
       throw new Error("Cannot determine current position");
     }
-    console.log(`⏱️ Got current position in ${Date.now() - posStartTime}ms`);
 
     console.log(
       `📍 Current position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
@@ -254,9 +254,6 @@ export class PathfindingModule extends DustGameBase {
     // Preload block data for pathfinding area
     const preloadStartTime = Date.now();
     await this.preloadBlockData(currentPos, targetPos);
-    console.log(
-      `⏱️ Preloaded block data in ${Date.now() - preloadStartTime}ms`
-    );
 
     // Find path using A* with heuristic weighting
     const pathStartTime = Date.now();
@@ -329,9 +326,6 @@ export class PathfindingModule extends DustGameBase {
     // Preload block data for pathfinding area
     const preloadStartTime = Date.now();
     await this.preloadBlockData(currentPos, targetPos);
-    console.log(
-      `⏱️ Preloaded block data in ${Date.now() - preloadStartTime}ms`
-    );
 
     // Find path using optimized A*
     const pathStartTime = Date.now();
@@ -349,26 +343,17 @@ export class PathfindingModule extends DustGameBase {
 
     // Report cache performance
     const totalCacheAccesses = this.cacheHits + this.cacheMisses;
-    const cacheHitRate =
-      totalCacheAccesses > 0
-        ? ((this.cacheHits / totalCacheAccesses) * 100).toFixed(1)
-        : "0";
-    console.log(
-      `📊 Cache performance: ${this.cacheHits} hits, ${this.cacheMisses} misses (${cacheHitRate}% hit rate)`
-    );
     console.log(`📦 Block cache size: ${this.blockDataCache.size} blocks`);
 
     return path;
   }
 
   // Preload only the starting chunk for dynamic per-chunk pathfinding
-  private async preloadBlockData(
+  async preloadBlockData(
     start: Vec3,
     end: Vec3,
     batchSize: number = 5
   ): Promise<void> {
-    console.log("🔄 Preloading starting chunk for dynamic pathfinding...");
-
     // Only load the starting chunk initially
     const startChunk = this.world.toChunkCoord(start);
     console.log(

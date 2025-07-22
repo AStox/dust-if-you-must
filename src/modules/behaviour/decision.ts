@@ -43,8 +43,6 @@ export async function selectBestBehaviorMode(
   bot: DustBot,
   availableModes: IBehaviorMode[]
 ): Promise<IBehaviorMode | null> {
-  console.log("\n🔍 Evaluating behavior modes...");
-
   const viableModes: Array<{ mode: IBehaviorMode; priority: number }> = [];
 
   for (const mode of availableModes) {

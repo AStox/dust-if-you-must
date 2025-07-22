@@ -1,0 +1,225 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Dust AI Agent Operational Configuration",
+  "description": "Configuration schema for DUST AI agent operational areas, entity IDs, and behavior parameters",
+  "type": "object",
+  "properties": {
+    "version": {
+      "type": "string",
+      "pattern": "^\\d+\\.\\d+\\.\\d+$",
+      "description": "Configuration file version (semantic versioning)"
+    },
+    "name": {
+      "type": "string",
+      "description": "Human-readable name for this configuration"
+    },
+    "description": {
+      "type": "string",
+      "description": "Description of this operational setup"
+    },
+    "areas": {
+      "type": "object",
+      "description": "Operational area definitions",
+      "properties": {
+        "farming": {
+          "type": "object",
+          "description": "Farming operation areas and coordinates",
+          "properties": {
+            "farmCenter": {
+              "$ref": "#/definitions/position3d",
+              "description": "Central coordinate of the farm area"
+            },
+            "farmBounds": {
+              "type": "object",
+              "description": "Farm plot area boundaries",
+              "properties": {
+                "corner1": {
+                  "$ref": "#/definitions/position3d",
+                  "description": "First corner of farm rectangle (top-left)"
+                },
+                "corner2": {
+                  "$ref": "#/definitions/position3d",
+                  "description": "Second corner of farm rectangle (bottom-right)"
+                }
+              },
+              "required": ["corner1", "corner2"]
+            },
+            "waterSource": {
+              "$ref": "#/definitions/position3d",
+              "description": "Water collection point for buckets"
+            },
+            "coastPosition": {
+              "$ref": "#/definitions/position3d",
+              "description": "Coast area for accessing water"
+            },
+            "housePosition": {
+              "$ref": "#/definitions/position3d",
+              "description": "House/base location for navigation"
+            }
+          },
+          "required": [
+            "farmCenter",
+            "farmBounds",
+            "waterSource",
+            "coastPosition",
+            "housePosition"
+          ]
+        },
+        "energize": {
+          "type": "object",
+          "description": "Energy/tree operation areas",
+          "properties": {
+            "treeFarmBounds": {
+              "type": "object",
+              "description": "Tree farm area boundaries",
+              "properties": {
+                "corner1": {
+                  "$ref": "#/definitions/position3d",
+                  "description": "First corner of tree farm rectangle"
+                },
+                "corner2": {
+                  "$ref": "#/definitions/position3d",
+                  "description": "Second corner of tree farm rectangle"
+                }
+              },
+              "required": ["corner1", "corner2"]
+            },
+            "powerStoneLocation": {
+              "$ref": "#/definitions/position3d",
+              "description": "Power stone processing location"
+            }
+          },
+          "required": ["treeFarmBounds", "powerStoneLocation"]
+        }
+      },
+      "required": ["farming"]
+    },
+    "entities": {
+      "type": "object",
+      "description": "Game entity IDs for chests, force fields, etc.",
+      "properties": {
+        "chests": {
+          "type": "object",
+          "description": "Storage chest entity IDs",
+          "properties": {
+            "rightChest": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "description": "Primary storage chest entity ID"
+            },
+            "leftChest": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "description": "Secondary storage chest entity ID"
+            }
+          },
+          "required": ["rightChest"]
+        },
+        "forceFields": {
+          "type": "object",
+          "description": "Force field entity IDs for energy operations",
+          "properties": {
+            "primaryForceField": {
+              "type": "string",
+              "pattern": "^0x[0-9a-fA-F]{64}$",
+              "description": "Primary force field to energize"
+            }
+          }
+        }
+      },
+      "required": ["chests"]
+    },
+    "parameters": {
+      "type": "object",
+      "description": "Operational parameters and thresholds",
+      "properties": {
+        "locationThreshold": {
+          "type": "number",
+          "minimum": 0.1,
+          "maximum": 50,
+          "default": 1,
+          "description": "Distance threshold for determining if agent is at a location"
+        },
+        "farming": {
+          "type": "object",
+          "description": "Farming-specific parameters",
+          "properties": {
+            "targetBuckets": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 40,
+              "default": 34,
+              "description": "Target number of buckets to maintain in inventory"
+            },
+            "targetSeeds": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 99,
+              "default": 99,
+              "description": "Target number of seeds to maintain in inventory"
+            },
+            "targetWheat": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 99,
+              "default": 99,
+              "description": "Target amount of wheat to maintain in inventory"
+            },
+            "lowEnergyThreshold": {
+              "type": "number",
+              "minimum": 0.01,
+              "maximum": 0.99,
+              "default": 0.25,
+              "description": "Energy threshold below which agent should eat (as percentage)"
+            }
+          }
+        },
+        "energize": {
+          "type": "object",
+          "description": "Energy operation parameters",
+          "properties": {
+            "targetBatteries": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 99,
+              "default": 10,
+              "description": "Target number of batteries to maintain"
+            },
+            "treeChopRadius": {
+              "type": "number",
+              "minimum": 1,
+              "maximum": 50,
+              "default": 10,
+              "description": "Radius around energize center to look for trees"
+            }
+          }
+        }
+      },
+      "required": ["locationThreshold"]
+    }
+  },
+  "required": ["version", "name", "areas", "entities", "parameters"],
+  "definitions": {
+    "position3d": {
+      "type": "object",
+      "description": "3D coordinate position",
+      "properties": {
+        "x": {
+          "type": "integer",
+          "description": "X coordinate"
+        },
+        "y": {
+          "type": "integer",
+          "description": "Y coordinate (height)"
+        },
+        "z": {
+          "type": "integer",
+          "description": "Z coordinate"
+        }
+      },
+      "required": ["x", "y", "z"],
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

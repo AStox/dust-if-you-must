@@ -9,6 +9,7 @@ import {
   farmCorner1,
   farmCorner2,
   rightChestEntityId,
+  getFarmingParameters,
 } from "./farmingMode.js";
 
 export async function walkToCoast(bot: DustBot) {
@@ -215,21 +216,35 @@ export async function growSeededFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   console.log("🚜 GROWING SEEDED FARM PLOTS");
   console.log("=".repeat(60));
 
-  for (const plot of farmPlots) {
+  // TODO: do each plot in parallel
+  // Check all plots in parallel to identify which need growing
+  const plotChecks = farmPlots.map(async (plot) => {
     const plotType = await bot.world.getBlockType({
       x: plot.x,
       y: plot.y + 1,
       z: plot.z,
     });
 
-    if (
+    const needsGrowing =
       plotType === getObjectIdByName("WheatSeed")! &&
       (await bot.farming.isPlantReadyToGrow({
         x: plot.x,
         y: plot.y + 1,
         z: plot.z,
-      }))
-    ) {
+      }));
+
+    return {
+      plot,
+      plotType,
+      needsGrowing,
+    };
+  });
+
+  const plotResults = await Promise.all(plotChecks);
+
+  // Process growing operations sequentially to avoid blockchain conflicts
+  for (const { plot, plotType, needsGrowing } of plotResults) {
+    if (needsGrowing) {
       try {
         await bot.farming.growSeed(plot);
       } catch (error) {
@@ -309,10 +324,12 @@ export async function transferToFromChest(bot: DustBot) {
     `📦 Chest contains: ${bucketsInChest} buckets, ${seedsInChest} seeds, ${wheatInChest} wheat`
   );
 
-  // === 1. TRANSFER BUCKETS (target: 34) ===
-  if (currentState.emptyBuckets < 34) {
-    const bucketsNeeded = 34 - currentState.emptyBuckets;
-    console.log(`🪣 Need ${bucketsNeeded} more buckets to reach 34`);
+  const params = getFarmingParameters();
+
+  // === 1. TRANSFER BUCKETS (target: 5) ===
+  if (currentState.emptyBuckets < params.targetBuckets) {
+    const bucketsNeeded = params.targetBuckets - currentState.emptyBuckets;
+    console.log(`🪣 Need ${bucketsNeeded} more buckets to reach 5`);
 
     if (bucketsInChest > 0) {
       const bucketsToTransfer = Math.min(bucketsNeeded, bucketsInChest);
@@ -335,18 +352,18 @@ export async function transferToFromChest(bot: DustBot) {
       console.log("⚠️ No buckets available in chest");
     }
   } else {
-    console.log("✅ Already have enough buckets (34 or more)");
+    console.log("✅ Already have enough buckets (5 or more)");
   }
 
-  // === 2. TRANSFER WHEAT SEEDS (target: 99) ===
-  if (currentState.wheatSeeds < 99) {
-    const seedsNeeded = 99 - currentState.wheatSeeds;
-    console.log(`🌾 Need ${seedsNeeded} more wheat seeds to reach 99`);
+  // === 2. TRANSFER SEEDS (target: 99) ===
+  if (currentState.wheatSeeds < params.targetSeeds) {
+    const seedsNeeded = params.targetSeeds - currentState.wheatSeeds;
+    console.log(`🌱 Need ${seedsNeeded} more seeds to reach 99`);
 
     if (seedsInChest > 0) {
       const seedsToTransfer = Math.min(seedsNeeded, seedsInChest);
       console.log(
-        `📤 Transferring ${seedsToTransfer} wheat seeds from chest to player`
+        `📤 Transferring ${seedsToTransfer} seeds from chest to player`
       );
 
       try {
@@ -356,17 +373,15 @@ export async function transferToFromChest(bot: DustBot) {
           wheatSeedId,
           seedsToTransfer
         );
-        console.log(
-          `✅ Successfully transferred ${seedsToTransfer} wheat seeds`
-        );
+        console.log(`✅ Successfully transferred ${seedsToTransfer} seeds`);
       } catch (error) {
-        console.log(`❌ Failed to transfer wheat seeds: ${error}`);
+        console.log(`❌ Failed to transfer seeds: ${error}`);
       }
     } else {
-      console.log("⚠️ No wheat seeds available in chest");
+      console.log("⚠️ No seeds available in chest");
     }
   } else {
-    console.log("✅ Already have enough wheat seeds (99 or more)");
+    console.log("✅ Already have enough seeds (99 or more)");
   }
 
   // === 3. TRANSFER WHEAT (target: 99) ===
@@ -480,4 +495,176 @@ export async function transferToFromChest(bot: DustBot) {
   }
 
   console.log("🔄 Comprehensive inventory setup completed");
+}
+
+export async function setupEnergizeInventory(bot: DustBot): Promise<void> {
+  console.log("🔄 === ENERGIZE INVENTORY SETUP ===");
+
+  // Get current inventory
+  const currentInventory = await bot.inventory.getInventory(
+    bot.player.characterEntityId
+  );
+
+  // Count current axes and oak saplings
+  let currentAxes = 0;
+  let currentOakSaplings = 0;
+  let otherItems = 0;
+
+  const axeTypes = [
+    getObjectIdByName("WoodenAxe"),
+    getObjectIdByName("StoneAxe"),
+    getObjectIdByName("IronAxe"),
+    getObjectIdByName("DiamondAxe"),
+  ];
+  const oakSaplingId = getObjectIdByName("OakSapling");
+
+  for (const item of currentInventory) {
+    if (axeTypes.includes(item.type)) {
+      currentAxes += item.amount;
+    } else if (item.type === oakSaplingId) {
+      currentOakSaplings += item.amount;
+    } else {
+      otherItems += item.amount;
+    }
+  }
+
+  console.log(
+    `🔍 Current state: ${currentAxes} axes, ${currentOakSaplings} oak saplings, ${otherItems} other items`
+  );
+
+  // Target: exactly 1 axe, at least 1 oak sapling (up to 99), 0 other items
+  const needsInventorySetup =
+    currentAxes !== 1 || currentOakSaplings < 1 || otherItems > 0;
+
+  if (!needsInventorySetup) {
+    console.log("✅ Inventory already perfect for energize mode!");
+    return;
+  }
+
+  // Get energize areas and entity IDs
+  const { getEnergizeAreas, getEnergizeEntityIds } = await import(
+    "./energizeMode.js"
+  );
+  const areas = getEnergizeAreas();
+  const entityIds = getEnergizeEntityIds();
+
+  // Move to farm center where the chest is located (shared between farming and energize)
+  const { getFarmingAreas } = await import("./farmingMode.js");
+  const farmingAreas = getFarmingAreas();
+
+  console.log("🔄 Need to reorganize inventory, moving to chest...");
+  await bot.movement.pathTo({
+    x: farmingAreas.farmCenter.x,
+    z: farmingAreas.farmCenter.z,
+  });
+
+  // Step 1: Store all current items in chest (bulk transfer)
+  console.log("\n📤 Storing all current items in chest...");
+
+  if (currentInventory.length > 0) {
+    // Build bulk transfer array: [fromSlot, toSlot, amount]
+    const transfers: [number, number, number][] = [];
+
+    // Get available slots in chest
+    const chestInventory = await bot.inventory.getInventory(
+      entityIds.rightChestEntityId
+    );
+    let chestSlotIndex = 0;
+
+    for (
+      let playerSlot = 0;
+      playerSlot < currentInventory.length;
+      playerSlot++
+    ) {
+      const item = currentInventory[playerSlot];
+      if (item.amount > 0) {
+        console.log(
+          `  Preparing to store ${item.amount}x ${getItemName(item.type)}`
+        );
+
+        // Find available chest slot
+        while (
+          chestSlotIndex < 40 &&
+          chestInventory[chestSlotIndex] &&
+          chestInventory[chestSlotIndex].amount > 0
+        ) {
+          chestSlotIndex++;
+        }
+
+        if (chestSlotIndex < 40) {
+          transfers.push([playerSlot, chestSlotIndex, item.amount]);
+          chestSlotIndex++;
+        }
+      }
+    }
+
+    if (transfers.length > 0) {
+      console.log(
+        `📦 Executing bulk transfer of ${transfers.length} item stacks to chest...`
+      );
+      await bot.inventory.transfer(
+        bot.player.characterEntityId,
+        entityIds.rightChestEntityId,
+        transfers
+      );
+      console.log("✅ Bulk transfer to chest completed");
+    }
+  }
+
+  // Step 2: Retrieve exactly 1 axe (prefer higher tier)
+  console.log("\n📥 Retrieving exactly 1 axe...");
+  const axePriority = [
+    { name: "DiamondAxe", id: getObjectIdByName("DiamondAxe") },
+    { name: "IronAxe", id: getObjectIdByName("IronAxe") },
+    { name: "StoneAxe", id: getObjectIdByName("StoneAxe") },
+    { name: "WoodenAxe", id: getObjectIdByName("WoodenAxe") },
+  ];
+
+  let axeRetrieved = false;
+  for (const axe of axePriority) {
+    try {
+      console.log(`  Trying to get 1x ${axe.name}...`);
+      await bot.inventory.transferAmount(
+        entityIds.rightChestEntityId,
+        bot.player.characterEntityId,
+        axe.id!,
+        1
+      );
+      console.log(`  ✅ Retrieved 1x ${axe.name}`);
+      axeRetrieved = true;
+      break;
+    } catch (error) {
+      console.log(`  ❌ No ${axe.name} available in chest`);
+    }
+  }
+
+  if (!axeRetrieved) {
+    throw new Error(
+      "No axes available in chest! Cannot proceed with energize."
+    );
+  }
+
+  // Step 3: Retrieve oak saplings (at least 1, up to 99)
+  console.log("\n📥 Retrieving oak saplings (at least 1, up to 99)...");
+  try {
+    await bot.inventory.transferAmount(
+      entityIds.rightChestEntityId,
+      bot.player.characterEntityId,
+      oakSaplingId!,
+      99
+    );
+    console.log("  ✅ Retrieved Oak Saplings");
+  } catch (error) {
+    throw new Error(
+      "No Oak Saplings available in chest! Oak Saplings are required for energize mode"
+    );
+  }
+
+  console.log("🎯 Energize inventory setup completed!");
+}
+
+// Helper function to get item name from ID
+function getItemName(itemId: number): string {
+  const objectType = ObjectTypes[itemId];
+  return objectType ? objectType.name : `Unknown_${itemId}`;
 }

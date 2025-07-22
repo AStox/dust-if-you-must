@@ -64,10 +64,7 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
   abstract assessState(bot: DustBot): Promise<BotState>;
 
   async selectAction(state: BotState): Promise<UtilityAction> {
-    console.log(`\n🤖 === ${this.name} MODE ACTION SELECTION ===`);
-
-    // Check all actions and their eligibility
-    console.log("\n🔍 Checking action eligibility:");
+    // Calculate scores for all actions
     const actionDetails = this.actions.map((action) => {
       const canExecute = action.canExecute(state);
       const score = canExecute ? action.calculateScore(state) : 0;
@@ -75,17 +72,7 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
         action,
         canExecute,
         score,
-        reason: canExecute ? "✅ Available" : "❌ Cannot execute",
       };
-    });
-
-    // Log all actions with details
-    actionDetails.forEach((detail) => {
-      console.log(
-        `  ${detail.action.name}: ${
-          detail.reason
-        } (score: ${detail.score.toFixed(1)})`
-      );
     });
 
     const availableActions = actionDetails.filter(
@@ -93,28 +80,25 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
     );
 
     if (availableActions.length === 0) {
-      console.log("\n❌ No actions can execute! Checking why:");
-      this.actions.forEach((action) => {
-        console.log(`\n  ${action.name} requirements:`);
-        try {
-          const canExecute = action.canExecute(state);
-          console.log(`    Result: ${canExecute ? "✅ Pass" : "❌ Fail"}`);
-        } catch (error) {
-          console.log(`    Error: ${error}`);
-        }
+      console.log(`\n❌ ${this.name}: No actions can execute!`);
+      actionDetails.forEach((detail) => {
+        console.log(
+          `  ${detail.action.name}: ${detail.canExecute ? "✅" : "❌"}`
+        );
       });
       throw new Error(`No valid actions available for ${this.name} mode!`);
     }
 
     const sortedActions = availableActions.sort((a, b) => b.score - a.score);
 
-    console.log(`\n🎯 ${this.name} Mode Final Action Scores:`);
+    // Clean decision logging - just scores and final choice
+    console.log(`\n🎯 ${this.name} Action Scores:`);
     sortedActions.forEach((item) =>
       console.log(`  ${item.action.name}: ${item.score.toFixed(1)}`)
     );
 
     const selectedAction = sortedActions[0].action;
-    console.log(`\n✅ Selected action: ${selectedAction.name}`);
+    console.log(`\n✅ Executing: ${selectedAction.name}`);
 
     return selectedAction;
   }

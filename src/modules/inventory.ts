@@ -1,7 +1,14 @@
 import { DustGameBase } from "../core/base.js";
 import { EntityId, getObjectIdByName } from "../types";
+import { ObjectTypes } from "../types/objectTypes.js";
 import { packVec3 } from "../utils.js";
 import { WorldModule } from "./world.js";
+
+// Helper function to get item name from ID
+function getItemName(itemId: number): string {
+  const objectType = ObjectTypes[itemId];
+  return objectType ? objectType.name : `Unknown_${itemId}`;
+}
 
 export class InventoryModule extends DustGameBase {
   private world: WorldModule;
@@ -95,8 +102,14 @@ export class InventoryModule extends DustGameBase {
   ): Promise<{ type: number; amount: number }[]> {
     // Show all non-empty slots
     const slots: { type: number; amount: number }[] = [];
-    for (let slot = 0; slot < 40; slot++) {
-      const slotContents = await this.getInventorySlot(slot, entityId);
+
+    // Fetch all slots in parallel
+    const slotPromises = Array.from({ length: 40 }, (_, slot) =>
+      this.getInventorySlot(slot, entityId)
+    );
+    const slotResults = await Promise.all(slotPromises);
+
+    for (const slotContents of slotResults) {
       slots.push({
         type: slotContents!.itemType,
         amount: slotContents!.amount,
@@ -168,8 +181,7 @@ export class InventoryModule extends DustGameBase {
       fromEntityId
     );
     if (slotsWithItemType.length === 0) {
-      console.log("No slot found for item type", itemType);
-      return;
+      throw new Error(`No ${getItemName(itemType)} found in inventory`);
     }
 
     // Calculate fromSlots - which slots to take from and how much
@@ -190,7 +202,7 @@ export class InventoryModule extends DustGameBase {
 
     if (amountRemaining > 0) {
       throw new Error(
-        `Not enough items! Need ${amount}, only have ${
+        `Not enough ${getItemName(itemType)}! Need ${amount}, only have ${
           amount - amountRemaining
         }`
       );
@@ -206,7 +218,9 @@ export class InventoryModule extends DustGameBase {
 
     // Get max stack size for this item type
     const maxStackSize = this.getMaxStackSize(itemType);
-    console.log(`📏 Item type ${itemType} has max stack size: ${maxStackSize}`);
+    console.log(
+      `📏 ${getItemName(itemType)} has max stack size: ${maxStackSize}`
+    );
 
     // First, try to fill existing slots up to maxStackSize
     for (const [slotIndex, currentAmount] of existingToSlots) {
