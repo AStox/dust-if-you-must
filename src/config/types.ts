@@ -175,20 +175,6 @@ export interface ConfigValidationResult {
 }
 
 /**
- * Utility type to convert Position3D to Vec3 (for compatibility with existing code)
- */
-export function position3DToVec3(pos: Position3D): Vec3 {
-  return { x: pos.x, y: pos.y, z: pos.z };
-}
-
-/**
- * Utility type to convert Vec3 to Position3D
- */
-export function vec3ToPosition3D(vec: Vec3): Position3D {
-  return { x: vec.x, y: vec.y, z: vec.z };
-}
-
-/**
  * Default configuration values
  */
 export const DEFAULT_CONFIG_VALUES = {

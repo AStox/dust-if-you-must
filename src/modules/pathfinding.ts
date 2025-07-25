@@ -129,8 +129,8 @@ const LAVA_MOVE_ENERGY_COST = MAX_PLAYER_ENERGY / 10; // 81760000000000000
 // Move unit costs - matching Constants.sol exactly
 const BLOCK_TIME = 2; // seconds
 const MAX_MOVE_UNITS_PER_SECOND = MAX_MOVE_UNITS_PER_BLOCK / BLOCK_TIME; // 5e17
-const MOVING_UNIT_COST = MAX_MOVE_UNITS_PER_SECOND / 15; // ~3.33e16
-const SWIMMING_UNIT_COST = (MAX_MOVE_UNITS_PER_SECOND * 10) / 135; // ~3.7e16
+const MOVING_UNIT_COST = Math.floor(MAX_MOVE_UNITS_PER_SECOND / 15); // 33333333333333333
+const SWIMMING_UNIT_COST = Math.floor((MAX_MOVE_UNITS_PER_SECOND * 10) / 135); // 37037037037037037
 
 // Object type constants
 const LAVA_OBJECT_TYPE = 111; // ObjectTypes.Lava from smart contract
@@ -181,8 +181,18 @@ export class PathfindingModule extends DustGameBase {
   // Dynamic chunk loading tracking for A* algorithm
   private chunkLoadingTimeInCurrentSearch = 0;
 
-  // A* pathfinding to target Vec2 (x, z coordinates)
-  async pathTo(target: Vec2): Promise<Vec3[]> {
+  // Clear block cache for fresh data each cycle
+  clearCache(): void {
+    this.blockDataCache.clear();
+    this.preloadedChunkBounds = null;
+    this.preloadedChunks.clear();
+    this.cacheHits = 0;
+    this.cacheMisses = 0;
+    console.log("🧹 Pathfinding cache cleared for fresh cycle");
+  }
+
+  // A* pathfinding to target Vec3 (x, y, z coordinates)
+  async pathTo(target: Vec3): Promise<Vec3[]> {
     const startTime = Date.now();
 
     // Reset cache performance tracking for this run
@@ -193,7 +203,9 @@ export class PathfindingModule extends DustGameBase {
     this.chunkLoadingTimeInCurrentSearch = 0;
 
     console.log("=".repeat(60));
-    console.log(`🎯 Starting A* pathfinding to (${target.x}, ${target.z})`);
+    console.log(
+      `🎯 Starting A* pathfinding to (${target.x}, ${target.y}, ${target.z})`
+    );
 
     // Get current position
     const posStartTime = Date.now();
@@ -209,6 +221,7 @@ export class PathfindingModule extends DustGameBase {
     // Calculate distance to determine heuristic weight
     const distance = Math.sqrt(
       Math.pow(target.x - currentPos.x, 2) +
+        Math.pow(target.y - currentPos.y, 2) +
         Math.pow(target.z - currentPos.z, 2)
     );
 
@@ -216,48 +229,21 @@ export class PathfindingModule extends DustGameBase {
     let heuristicWeight = 1.0; // Default A*
     if (distance > 200) {
       heuristicWeight = 5.0; // Very greedy for long distances
-      console.log(
-        `📏 Long range (${distance.toFixed(
-          1
-        )} blocks) - using 5x heuristic weight`
-      );
     } else if (distance > 50) {
       heuristicWeight = 2.5; // Moderately greedy
-      console.log(
-        `📏 Medium range (${distance.toFixed(
-          1
-        )} blocks) - using 2.5x heuristic weight`
-      );
     } else {
-      heuristicWeight = 1.2; // Slightly greedy
-      console.log(
-        `📏 Short range (${distance.toFixed(
-          1
-        )} blocks) - using 1.2x heuristic weight`
-      );
+      heuristicWeight = 1.75; // Slightly greedy
     }
 
-    // Get target Y coordinate by finding ground level
-    const groundStartTime = Date.now();
-    const targetY = await this.world.getGroundLevel(
-      target.x,
-      target.z,
-      currentPos.y + 10
-    );
-    const targetPos: Vec3 = { x: target.x, y: targetY, z: target.z };
-    console.log(`⏱️ Got ground level in ${Date.now() - groundStartTime}ms`);
-
-    console.log(
-      `🎯 Target position: (${targetPos.x}, ${targetPos.y}, ${targetPos.z})`
-    );
+    console.log(`🎯 Target position: (${target.x}, ${target.y}, ${target.z})`);
 
     // Preload block data for pathfinding area
     const preloadStartTime = Date.now();
-    await this.preloadBlockData(currentPos, targetPos);
+    await this.preloadBlockData(currentPos);
 
     // Find path using A* with heuristic weighting
     const pathStartTime = Date.now();
-    const path = await this.findPath(currentPos, targetPos, heuristicWeight);
+    const path = await this.findPath(currentPos, target, heuristicWeight);
     console.log(
       `⏱️ A* pathfinding completed in ${Date.now() - pathStartTime}ms`
     );
@@ -283,77 +269,8 @@ export class PathfindingModule extends DustGameBase {
     return path;
   }
 
-  // Optimized pathfinding implementation
-  private async pathToOptimized(
-    target: Vec2,
-    options: PathfindingOptions
-  ): Promise<Vec3[]> {
-    const startTime = Date.now();
-
-    // Reset cache performance tracking for this run
-    this.cacheHits = 0;
-    this.cacheMisses = 0;
-    this.preloadedChunkBounds = null;
-    this.preloadedChunks.clear();
-    this.chunkLoadingTimeInCurrentSearch = 0;
-
-    // Get current position
-    const posStartTime = Date.now();
-    const currentPos = await this.player.getCurrentPosition();
-    if (!currentPos) {
-      throw new Error("Cannot determine current position");
-    }
-    console.log(`⏱️ Got current position in ${Date.now() - posStartTime}ms`);
-
-    console.log(
-      `📍 Current position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
-    );
-
-    // Get target Y coordinate by finding ground level
-    const groundStartTime = Date.now();
-    const targetY = await this.world.getGroundLevel(
-      target.x,
-      target.z,
-      currentPos.y + 10
-    );
-    const targetPos: Vec3 = { x: target.x, y: targetY, z: target.z };
-    console.log(`⏱️ Got ground level in ${Date.now() - groundStartTime}ms`);
-
-    console.log(
-      `🎯 Target position: (${targetPos.x}, ${targetPos.y}, ${targetPos.z})`
-    );
-
-    // Preload block data for pathfinding area
-    const preloadStartTime = Date.now();
-    await this.preloadBlockData(currentPos, targetPos);
-
-    // Find path using optimized A*
-    const pathStartTime = Date.now();
-    const path = await this.findPathOptimized(currentPos, targetPos, options);
-    console.log(
-      `⏱️ Optimized pathfinding completed in ${Date.now() - pathStartTime}ms`
-    );
-
-    if (!path || path.length === 0) {
-      throw new Error("No path found to target");
-    }
-
-    console.log(`📍 Path found with ${path.length} steps`);
-    console.log(`⏱️ Total pathfinding time: ${Date.now() - startTime}ms`);
-
-    // Report cache performance
-    const totalCacheAccesses = this.cacheHits + this.cacheMisses;
-    console.log(`📦 Block cache size: ${this.blockDataCache.size} blocks`);
-
-    return path;
-  }
-
   // Preload only the starting chunk for dynamic per-chunk pathfinding
-  async preloadBlockData(
-    start: Vec3,
-    end: Vec3,
-    batchSize: number = 5
-  ): Promise<void> {
+  async preloadBlockData(start: Vec3): Promise<void> {
     // Only load the starting chunk initially
     const startChunk = this.world.toChunkCoord(start);
     console.log(
@@ -365,15 +282,12 @@ export class PathfindingModule extends DustGameBase {
     this.preloadedChunks.clear();
 
     // Load the starting chunk
-    const loadStartTime = Date.now();
     try {
       const chunkBlocks = await this.world.getChunkBlocks({
         x: startChunk.x * this.CHUNK_SIZE,
         y: startChunk.y * this.CHUNK_SIZE,
         z: startChunk.z * this.CHUNK_SIZE,
       });
-
-      console.log(`📦 Starting chunk returned ${chunkBlocks.size} blocks`);
 
       // Copy all blocks to our cache
       for (const [key, value] of chunkBlocks) {
@@ -387,7 +301,6 @@ export class PathfindingModule extends DustGameBase {
       console.log(
         `✅ Successfully loaded starting chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z})`
       );
-      console.log(`📦 Initial cache size: ${this.blockDataCache.size} blocks`);
     } catch (error) {
       console.error(
         `❌ Failed to load starting chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z}): ${error}`
@@ -396,8 +309,6 @@ export class PathfindingModule extends DustGameBase {
         `Cannot start pathfinding without initial chunk: ${error}`
       );
     }
-
-    console.log(`⏱️ Loaded starting chunk in ${Date.now() - loadStartTime}ms`);
   }
 
   // Get chunks that intersect with a line from start to end, ensuring face connectivity
@@ -485,6 +396,28 @@ export class PathfindingModule extends DustGameBase {
     );
 
     return connectedChunks;
+  }
+
+  getChunksInBoundingBox(start: Vec3, end: Vec3): Vec3[] {
+    const chunks = new Set<string>();
+    const chunkList: Vec3[] = [];
+
+    const startChunk = this.world.toChunkCoord(start);
+    const endChunk = this.world.toChunkCoord(end);
+
+    for (let x = startChunk.x; x <= endChunk.x; x++) {
+      for (let y = startChunk.y; y <= endChunk.y; y++) {
+        for (let z = startChunk.z; z <= endChunk.z; z++) {
+          const key = `${x},${y},${z}`;
+          if (!chunks.has(key)) {
+            chunks.add(key);
+            chunkList.push({ x, y, z });
+          }
+        }
+      }
+    }
+
+    return chunkList;
   }
 
   // Ensure that all chunks in the list are connected by full faces
@@ -638,216 +571,6 @@ export class PathfindingModule extends DustGameBase {
     }
   }
 
-  // Optimized A* pathfinding algorithm with configurable strategies
-  private async findPathOptimized(
-    start: Vec3,
-    end: Vec3,
-    options: PathfindingOptions
-  ): Promise<Vec3[] | null> {
-    const {
-      maxIterations = 100000,
-      heuristicWeight = 1.0,
-      useJumpPoints = false,
-      beamWidth,
-    } = options;
-
-    console.log(`🔍 Running optimized pathfinding...`);
-    console.log(`   🎛️ Heuristic weight: ${heuristicWeight}x`);
-    console.log(`   🦘 Jump points: ${useJumpPoints ? "enabled" : "disabled"}`);
-    console.log(`   📡 Beam width: ${beamWidth || "unlimited"}`);
-    console.log(`   🔢 Max iterations: ${maxIterations}`);
-
-    // Verify only start position is within preloaded chunks
-    const startChunk = this.world.toChunkCoord(start);
-    const startChunkKey = `${startChunk.x},${startChunk.y},${startChunk.z}`;
-
-    if (!this.preloadedChunks.has(startChunkKey)) {
-      console.error(
-        `❌ Start position (${start.x}, ${start.y}, ${start.z}) is in chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z}) which is not preloaded!`
-      );
-      return null;
-    }
-
-    // Use efficient priority queue instead of array
-    const openSet = new PriorityQueue();
-    const closedSet = new Set<string>();
-    const nodeMap = new Map<string, PathNode>(); // Track all nodes for updates
-
-    let iterationCount = 0;
-    let totalNeighborTime = 0;
-
-    // Track closest approach to target for debugging
-    let closestNode: PathNode | null = null;
-    let closestDistance = Infinity;
-    let closestIteration = 0;
-
-    // Create start node with initial physics state
-    const startNode: PathNode = {
-      position: start,
-      gCost: 0,
-      hCost: this.calculateHeuristic(start, end),
-      fCost: 0,
-      parent: null,
-      jumps: 0,
-      glides: 0,
-      fallHeight: 0,
-      hasGravity: await this.hasGravity(start),
-      moveUnits: 0,
-      discoveredAtIteration: 0,
-      priority: 0,
-    };
-
-    // Apply heuristic weighting for greedy behavior
-    startNode.fCost = startNode.gCost + startNode.hCost * heuristicWeight;
-    const startKey = `${start.x},${start.y},${start.z}`;
-    nodeMap.set(startKey, startNode);
-    openSet.push(startNode);
-
-    while (!openSet.isEmpty()) {
-      iterationCount++;
-
-      // Apply beam search pruning if specified
-      if (beamWidth && openSet.length > beamWidth) {
-        openSet.pruneToSize(beamWidth);
-      }
-
-      // Log progress
-      if (iterationCount % 1000 === 0) {
-        console.log(
-          `🔄 Iteration ${iterationCount}, open: ${
-            openSet.length
-          }, closest: ${closestDistance.toFixed(1)} blocks`
-        );
-      }
-
-      // Get the node with lowest F cost (efficient with heap)
-      const currentNode = openSet.pop()!;
-      const currentKey = `${currentNode.position.x},${currentNode.position.y},${currentNode.position.z}`;
-
-      // Add to closed set
-      closedSet.add(currentKey);
-
-      // Track closest approach to target
-      const distanceToTarget = this.calculateDistanceEuclidean(
-        currentNode.position,
-        end
-      );
-      if (distanceToTarget < closestDistance) {
-        closestDistance = distanceToTarget;
-        closestNode = currentNode;
-        closestIteration = iterationCount;
-      }
-
-      // Check if we reached the target
-      if (
-        currentNode.position.x === end.x &&
-        currentNode.position.y === end.y &&
-        currentNode.position.z === end.z
-      ) {
-        console.log(`🎯 Path found after ${iterationCount} iterations!`);
-        return this.reconstructPath(currentNode);
-      }
-
-      // Generate neighbors (with jump point optimization if enabled)
-      const neighborStartTime = Date.now();
-      let neighbors: Vec3[];
-
-      if (useJumpPoints && this.canUseJumpPoints(currentNode.position, end)) {
-        neighbors = await this.getJumpPointNeighbors(currentNode.position, end);
-      } else {
-        neighbors = await this.getOptimizedNeighbors(currentNode.position, end);
-      }
-
-      const neighborElapsed = Date.now() - neighborStartTime;
-      totalNeighborTime += neighborElapsed;
-
-      for (const neighbor of neighbors) {
-        const neighborKey = `${neighbor.x},${neighbor.y},${neighbor.z}`;
-
-        // Skip if already processed
-        if (closedSet.has(neighborKey)) {
-          continue;
-        }
-
-        // Calculate costs with direction bias
-        const gCost =
-          currentNode.gCost +
-          this.calculateDistance(currentNode.position, neighbor);
-        const hCost = this.calculateHeuristic(neighbor, end);
-
-        // Apply heuristic weighting and direction bias
-        const directionBias = this.calculateDirectionBias(
-          currentNode.position,
-          neighbor,
-          end
-        );
-        const fCost = gCost + hCost * heuristicWeight + directionBias;
-
-        // Check if this path to neighbor is better
-        const existingNode = nodeMap.get(neighborKey);
-
-        if (!existingNode || gCost < existingNode.gCost) {
-          // Calculate physics state (simplified for performance)
-          const neighborHasGravity = await this.hasGravity(neighbor);
-          const { newJumps, newGlides, newFallHeight, newMoveUnits, isValid } =
-            this.calculatePhysicsState(
-              currentNode,
-              neighbor,
-              neighborHasGravity
-            );
-
-          if (!isValid) {
-            continue; // Skip invalid moves
-          }
-
-          const neighborNode: PathNode = {
-            position: neighbor,
-            gCost,
-            hCost,
-            fCost,
-            parent: currentNode,
-            jumps: newJumps,
-            glides: newGlides,
-            fallHeight: newFallHeight,
-            hasGravity: neighborHasGravity,
-            moveUnits: newMoveUnits,
-            discoveredAtIteration: iterationCount,
-            priority: fCost,
-          };
-
-          if (!existingNode) {
-            nodeMap.set(neighborKey, neighborNode);
-            openSet.push(neighborNode);
-          } else {
-            // Update existing node
-            Object.assign(existingNode, neighborNode);
-            // Note: In a real implementation, we'd need to update the heap here
-          }
-        }
-      }
-
-      // Safety break for very long searches
-      if (iterationCount > maxIterations) {
-        console.log(
-          `⚠️ Max iterations reached (${iterationCount}) - stopping search`
-        );
-        break;
-      }
-    }
-
-    // Handle failure case with debugging
-    console.log(`❌ No path found after ${iterationCount} iterations`);
-    this.logPathfindingDebug(
-      closestNode,
-      end,
-      iterationCount,
-      closestDistance,
-      closestIteration
-    );
-
-    return null;
-  }
-
   // A* pathfinding algorithm with optional heuristic weighting
   private async findPath(
     start: Vec3,
@@ -856,6 +579,19 @@ export class PathfindingModule extends DustGameBase {
   ): Promise<Vec3[] | null> {
     console.log(
       `🔍 Running A* pathfinding with ${heuristicWeight}x heuristic weight...`
+    );
+
+    // Calculate distance and set dynamic iteration limit
+    const distance = Math.sqrt(
+      Math.pow(end.x - start.x, 2) +
+        Math.pow(end.y - start.y, 2) +
+        Math.pow(end.z - start.z, 2)
+    );
+    const maxIterations = Math.floor(distance * 100);
+    console.log(
+      `📏 Distance to target: ${distance.toFixed(
+        1
+      )} blocks, max iterations: ${maxIterations}`
     );
 
     // Verify only start position is within preloaded chunks (end will be loaded dynamically)
@@ -920,7 +656,7 @@ export class PathfindingModule extends DustGameBase {
       iterationCount++;
 
       // Log progress every 10 iterations
-      if (iterationCount % 10 === 0) {
+      if (iterationCount % 100 === 0) {
         const currentChunkCount = this.preloadedChunks.size;
         const newChunksLoaded = currentChunkCount - chunksLoadedCount;
         console.log(
@@ -1158,16 +894,16 @@ export class PathfindingModule extends DustGameBase {
             }
           }
 
-          // TEMPORARILY DISABLED: Move unit limit constraint (biggest blocker for long paths)
-          // if (newMoveUnits > MAX_MOVE_UNITS_PER_BLOCK) {
-          //   if (isDebugNeighbor) {
-          //     console.log(
-          //       `   ❌ REJECTED: Move unit limit exceeded - ${newMoveUnits} > ${MAX_MOVE_UNITS_PER_BLOCK} (MAX_MOVE_UNITS_PER_BLOCK)`
-          //     );
-          //   }
-          //   // Skip this neighbor - exceeds move unit limit
-          //   continue;
-          // }
+          // Re-enable move unit limit constraint
+          if (newMoveUnits > MAX_MOVE_UNITS_PER_BLOCK) {
+            if (isDebugNeighbor) {
+              console.log(
+                `   ❌ REJECTED: Move unit limit exceeded - ${newMoveUnits} > ${MAX_MOVE_UNITS_PER_BLOCK} (MAX_MOVE_UNITS_PER_BLOCK)`
+              );
+            }
+            // Skip this neighbor - exceeds move unit limit
+            continue;
+          }
 
           const neighborNode: PathNode = {
             position: neighbor,
@@ -1215,7 +951,7 @@ export class PathfindingModule extends DustGameBase {
       }
 
       // Safety break for very long searches
-      if (iterationCount > 100000) {
+      if (iterationCount > maxIterations) {
         console.log(
           `⚠️ A* search limit reached (${iterationCount} iterations) - pathfinding taking too long`
         );
@@ -1394,6 +1130,13 @@ export class PathfindingModule extends DustGameBase {
           continue;
         }
 
+        // DEBUG: Log ALL generated neighbors
+        if (anyDebugCoords) {
+          console.log(
+            `🔍 DEBUG NEIGHBORS: Generated neighbor (${newPos.x}, ${newPos.y}, ${newPos.z}) from dir(${dir.x}, ${dir.z}) yOffset=${yOffset}`
+          );
+        }
+
         const isDebugNeighbor = isDebugCoordinate(newPos);
 
         if (isDebugNeighbor) {
@@ -1435,6 +1178,11 @@ export class PathfindingModule extends DustGameBase {
             console.error(
               `❌ Failed to load chunks for neighbor (${newPos.x}, ${newPos.y}, ${newPos.z}): ${error}`
             );
+            if (anyDebugCoords) {
+              console.log(
+                `🔍 DEBUG NEIGHBORS: ❌ FILTERED OUT (${newPos.x}, ${newPos.y}, ${newPos.z}) - chunk loading failed`
+              );
+            }
             chunksOutOfBounds++;
             continue; // Skip this neighbor if chunk loading fails
           }
@@ -1446,11 +1194,23 @@ export class PathfindingModule extends DustGameBase {
           );
         }
 
+        if (anyDebugCoords) {
+          console.log(
+            `🔍 DEBUG NEIGHBORS: ✅ Added to potential neighbors: (${newPos.x}, ${newPos.y}, ${newPos.z})`
+          );
+        }
+
         potentialNeighbors.push(newPos);
       }
     }
 
-    const totalPossibleNeighbors = directions.length * 3; // 4 directions * 3 Y offsets each (-1, 0, +1)
+    const totalPossibleNeighbors = directions.length * 3 - 1; // 9 directions * 3 Y offsets each (-1, 0, +1) minus current position
+
+    if (anyDebugCoords) {
+      console.log(
+        `🔍 DEBUG NEIGHBORS: Generated ${potentialNeighbors.length} potential neighbors (expected ${totalPossibleNeighbors})`
+      );
+    }
 
     // OPTIMIZATION: Inline validation to eliminate duplicate validation calls
     const neighbors: Vec3[] = [];
@@ -2101,47 +1861,7 @@ export class PathfindingModule extends DustGameBase {
           `   Invalid coordinate: (${validationResult.invalidCoordinate?.x}, ${validationResult.invalidCoordinate?.y}, ${validationResult.invalidCoordinate?.z})`
         );
 
-        // Try to continue with a smaller batch or handle the error
-        if (
-          validationResult.coordinateIndex &&
-          validationResult.coordinateIndex > 0
-        ) {
-          // Execute the valid portion of the batch
-          const validBatch = batch.slice(0, validationResult.coordinateIndex);
-          console.log(
-            `⚠️ Executing only the first ${
-              validBatch.length
-            } valid steps from batch ${batchIndex + 1}`
-          );
-
-          const packedSteps = await Promise.all(
-            validBatch.map((step) => packVec3(step))
-          );
-
-          await this.executeSystemCallNonBlocking(
-            this.SYSTEM_IDS.MOVE_SYSTEM,
-            "move(bytes32,uint96[])",
-            [this.characterEntityId, packedSteps],
-            `A* pathfinding - partial batch ${batchIndex + 1}/${
-              batches.length
-            } (${validBatch.length}/${batch.length} steps)`
-          );
-
-          // Update current tracking position to the last valid coordinate executed
-          if (validBatch.length > 0) {
-            currentTrackingPos = validBatch[validBatch.length - 1];
-            console.log(
-              `📍 Updated tracking position to: (${currentTrackingPos.x}, ${currentTrackingPos.y}, ${currentTrackingPos.z})`
-            );
-          }
-
-          // Skip the rest of this batch and continue with the next
-          continue;
-        } else {
-          throw new Error(
-            `Batch validation failed: ${validationResult.reason}`
-          );
-        }
+        throw new Error(`Batch validation failed: ${validationResult.reason}`);
       }
 
       console.log(`✅ Batch ${batchIndex + 1} validation passed`);
@@ -2153,16 +1873,6 @@ export class PathfindingModule extends DustGameBase {
 
       const packedSteps = await Promise.all(packingPromises);
 
-      // Log the steps in this batch
-      for (let i = 0; i < batch.length; i++) {
-        const step = batch[i];
-        console.log(
-          `📍 Batch ${batchIndex + 1} Step ${i + 1}/${batch.length}: (${
-            step.x
-          }, ${step.y}, ${step.z})`
-        );
-      }
-
       // Send this batch and wait for confirmation
       await this.executeSystemCall(
         this.SYSTEM_IDS.MOVE_SYSTEM,
@@ -2170,8 +1880,8 @@ export class PathfindingModule extends DustGameBase {
         [this.characterEntityId, packedSteps],
         `A* pathfinding - batch ${batchIndex + 1}/${batches.length} (${
           batch.length
-        } steps)`,
-        false // Don't log success (we'll do it ourselves)
+        } steps)`
+        // terminateOnFailure defaults to true, so errors will be thrown
       );
 
       // Update current tracking position to the last coordinate in this batch

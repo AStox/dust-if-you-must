@@ -5,61 +5,10 @@ import { BaseBehaviorMode } from "./behaviorMode.js";
 import { TreesModule } from "../trees.js";
 import { PathfindingModule } from "../pathfinding.js";
 import { getOperationalConfig } from "../../config/loader.js";
-import { position3DToVec3 } from "../../config/types.js";
-
-// Helper function to get item name from ID
-function getItemName(itemId: number): string {
-  const objectType = ObjectTypes[itemId];
-  return objectType ? objectType.name : `Unknown_${itemId}`;
-}
 
 // Energize-specific constants
 export const MAX_ENERGY: number = 817600000000000000;
 export const DEFAULT_OPERATION_DELAY = 2000; // milliseconds
-
-/**
- * Get energize areas from configuration
- */
-export function getEnergizeAreas() {
-  const config = getOperationalConfig();
-  const energize = config.areas.energize;
-
-  if (!energize) {
-    throw new Error(
-      "Energize areas not configured. Please add energize configuration to operational.json"
-    );
-  }
-
-  return {
-    powerStoneLocation: position3DToVec3(energize.powerStoneLocation),
-    treeFarmCorner1: position3DToVec3(energize.treeFarmBounds.corner1),
-    treeFarmCorner2: position3DToVec3(energize.treeFarmBounds.corner2),
-  };
-}
-
-/**
- * Get energize entity IDs from configuration
- */
-export function getEnergizeEntityIds() {
-  const config = getOperationalConfig();
-  return {
-    powerStoneEntityId: (config.entities as any).powerStones?.powerStone,
-    forceFieldEntityId: config.entities.forceFields?.primaryForceField,
-    rightChestEntityId: config.entities.chests?.rightChest,
-  };
-}
-
-/**
- * Get energize parameters from configuration
- */
-export function getEnergizeParameters() {
-  const config = getOperationalConfig();
-  return {
-    locationThreshold: config.parameters.locationThreshold,
-    targetBatteries: config.parameters.energize?.targetBatteries || 10,
-    treeChopRadius: config.parameters.energize?.treeChopRadius || 8,
-  };
-}
 
 // Utility Functions
 function calculateDistance(pos1: Vec3, pos2: Vec3): number {
@@ -71,28 +20,33 @@ function calculateDistance(pos1: Vec3, pos2: Vec3): number {
 }
 
 function isInTreeFarm(position: Vec3): boolean {
+  const config = getOperationalConfig();
   try {
-    const areas = getEnergizeAreas();
     return (
       position.x >=
-        Math.min(areas.treeFarmCorner1.x, areas.treeFarmCorner2.x) &&
+        Math.min(
+          config.areas.energize!.treeFarmBounds.corner1.x,
+          config.areas.energize!.treeFarmBounds.corner2.x
+        ) &&
       position.x <=
-        Math.max(areas.treeFarmCorner1.x, areas.treeFarmCorner2.x) &&
+        Math.max(
+          config.areas.energize!.treeFarmBounds.corner1.x,
+          config.areas.energize!.treeFarmBounds.corner2.x
+        ) &&
       position.z >=
-        Math.min(areas.treeFarmCorner1.z, areas.treeFarmCorner2.z) &&
-      position.z <= Math.max(areas.treeFarmCorner1.z, areas.treeFarmCorner2.z)
+        Math.min(
+          config.areas.energize!.treeFarmBounds.corner1.z,
+          config.areas.energize!.treeFarmBounds.corner2.z
+        ) &&
+      position.z <=
+        Math.max(
+          config.areas.energize!.treeFarmBounds.corner1.z,
+          config.areas.energize!.treeFarmBounds.corner2.z
+        )
     );
   } catch (error) {
     return false;
   }
-}
-
-function determineEnergizeLocation(
-  position: Vec3
-): "coast" | "house" | "farm" | "unknown" {
-  // Since we need to work with the existing BotState location types,
-  // we'll use "unknown" and check tree farm bounds separately
-  return "unknown";
 }
 
 /**
@@ -120,6 +74,17 @@ export class EnergizeMode extends BaseBehaviorMode {
         let oakSaplingCount = 0;
         let otherItemCount = 0;
 
+        // Items to exclude from "other items" count
+        const excludedTypes = [
+          getObjectIdByName("OakLog"),
+          getObjectIdByName("BirchLog"),
+          getObjectIdByName("SpruceLog"),
+          getObjectIdByName("OakLeaf"),
+          getObjectIdByName("BirchLeaf"),
+          getObjectIdByName("SpruceLeaf"),
+          getObjectIdByName("Battery"),
+        ].filter((id) => id !== undefined);
+
         for (const item of state.inventory) {
           if (
             item.type === getObjectIdByName("WoodenAxe") ||
@@ -130,11 +95,10 @@ export class EnergizeMode extends BaseBehaviorMode {
             axeCount += item.amount;
           } else if (item.type === getObjectIdByName("OakSapling")) {
             oakSaplingCount += item.amount;
-          } else {
+          } else if (!excludedTypes.includes(item.type)) {
             otherItemCount += item.amount;
           }
         }
-
         const needsSetup =
           axeCount !== 1 || oakSaplingCount < 1 || otherItemCount > 0;
 
@@ -162,7 +126,10 @@ export class EnergizeMode extends BaseBehaviorMode {
           .filter((item) => item.type === oakSaplingId)
           .reduce((acc, item) => acc + item.amount, 0);
 
-        const canSetup = axesInChest > 0 && saplingsInChest > 0;
+        const canSetup =
+          (axeCount < 1 && axesInChest > 0) ||
+          (oakSaplingCount < 1 && saplingsInChest > 0) ||
+          otherItemCount > 0;
 
         console.log(
           `    📦 SETUP_INVENTORY: need setup=${needsSetup}, chest has ${axesInChest} axes & ${saplingsInChest} saplings - canSetup=${canSetup}`
@@ -204,16 +171,36 @@ export class EnergizeMode extends BaseBehaviorMode {
         return 9999; // High priority when in tree farm with axe and trees
       },
       execute: async (bot) => {
+        const config = getOperationalConfig();
         console.log("🪓 Starting tree chopping...");
-        const areas = getEnergizeAreas();
 
-        // Find trees within radius
+        // Find trees
         const trees = await this.treesModule.scanForTrees(
-          areas.treeFarmCorner1,
-          areas.treeFarmCorner2
+          config.areas.energize!.treeFarmBounds.corner1,
+          config.areas.energize!.treeFarmBounds.corner2
         );
         if (trees.length > 0) {
           const nearestTree = trees[0]; // Already sorted by distance
+
+          // // Check if tree still exists before moving to it
+          // try {
+          //   const blockType = await bot.world.getBlockType(
+          //     nearestTree.position
+          //   );
+          //   const treeType = this.treesModule.getTreeTypeByObjectId(blockType);
+
+          //   if (!treeType || treeType.log !== blockType) {
+          //     console.log(
+          //       `🚫 Tree at (${nearestTree.position.x}, ${nearestTree.position.y}, ${nearestTree.position.z}) no longer exists, skipping`
+          //     );
+          //     return;
+          //   }
+          // } catch (error) {
+          //   console.log(
+          //     `🚫 Cannot verify tree at (${nearestTree.position.x}, ${nearestTree.position.y}, ${nearestTree.position.z}), skipping: ${error}`
+          //   );
+          //   return;
+          // }
 
           // Move right next to the tree before chopping
           console.log(
@@ -221,11 +208,26 @@ export class EnergizeMode extends BaseBehaviorMode {
           );
           await bot.movement.pathTo({
             x: nearestTree.position.x,
+            y: nearestTree.position.y,
             z: nearestTree.position.z + 1, // Position next to the tree
           });
 
-          // Now chop the tree
-          await this.treesModule.chopTree(nearestTree);
+          // Scan and chop the tree
+          const tree = await this.treesModule.scanTree(nearestTree.position);
+          const treePosition = tree.position;
+          const treeType = this.treesModule.getTreeTypeByObjectId(
+            await bot.world.getBlockType(treePosition)
+          );
+
+          await this.treesModule.chopTree(tree);
+
+          // Plant a new sapling at the same location
+          if (treeType) {
+            console.log(
+              `🌱 Planting ${treeType.name} sapling at chopped tree location (${treePosition.x}, ${treePosition.y}, ${treePosition.z})`
+            );
+            await this.treesModule.plantSapling(treePosition, treeType.sapling);
+          }
         }
       },
     },
@@ -286,12 +288,12 @@ export class EnergizeMode extends BaseBehaviorMode {
       },
       execute: async (bot) => {
         console.log("⛏️ Starting grown sapling mining...");
-        const areas = getEnergizeAreas();
+        const config = getOperationalConfig();
 
         // Find grown saplings within tree farm area
         const saplings = await this.treesModule.scanForSaplings(
-          areas.treeFarmCorner1,
-          areas.treeFarmCorner2
+          config.areas.energize!.treeFarmBounds.corner1,
+          config.areas.energize!.treeFarmBounds.corner2
         );
 
         // Filter for only fully grown saplings that can be mined
@@ -308,6 +310,7 @@ export class EnergizeMode extends BaseBehaviorMode {
           // Move next to the sapling and mine it
           await bot.movement.pathTo({
             x: nearestGrownSapling.position.x,
+            y: nearestGrownSapling.position.y,
             z: nearestGrownSapling.position.z,
           });
           await bot.world.mine(nearestGrownSapling.position);
@@ -330,11 +333,12 @@ export class EnergizeMode extends BaseBehaviorMode {
       },
       execute: async (bot) => {
         console.log("🚶 Walking to tree farm...");
-        const areas = getEnergizeAreas();
+        const config = getOperationalConfig();
         // Walk to corner1 of the tree farm
         await bot.movement.pathTo({
-          x: areas.treeFarmCorner1.x,
-          z: areas.treeFarmCorner1.z,
+          x: config.areas.energize!.treeFarmBounds.corner1.x,
+          y: config.areas.energize!.treeFarmBounds.corner1.y,
+          z: config.areas.energize!.treeFarmBounds.corner1.z,
         });
       },
     },
@@ -364,16 +368,16 @@ export class EnergizeMode extends BaseBehaviorMode {
     }
 
     // Check if there are trees or saplings to work with
-    const areas = getEnergizeAreas();
+    const config = getOperationalConfig();
 
     try {
       const trees = await this.treesModule.scanForTrees(
-        areas.treeFarmCorner1,
-        areas.treeFarmCorner2
+        config.areas.energize!.treeFarmBounds.corner1,
+        config.areas.energize!.treeFarmBounds.corner2
       );
       const saplings = await this.treesModule.scanForSaplings(
-        areas.treeFarmCorner1,
-        areas.treeFarmCorner2
+        config.areas.energize!.treeFarmBounds.corner1,
+        config.areas.energize!.treeFarmBounds.corner2
       );
 
       const hasWork = trees.length > 0 || saplings.length > 0;
@@ -388,9 +392,33 @@ export class EnergizeMode extends BaseBehaviorMode {
   }
 
   async assessState(bot: DustBot): Promise<BotState> {
+    const config = getOperationalConfig();
+    //TODO: Why do we have 3 caches?
+    this.pathfindingModule.clearCache();
+    bot.world.clearCache();
+    this.treesModule.clearCache();
+
     const inventory = await bot.inventory.getInventory(
       bot.player.characterEntityId
     );
+    console.log(
+      "📦 Player inventory:",
+      inventory
+        .filter((item) => item.amount > 0)
+        .map((item) => `${ObjectTypes[item.type].name} x${item.amount}`)
+        .join(", ") || "empty"
+    );
+    const chestInventory = await bot.inventory.getInventory(
+      config.entities.chests?.rightChest
+    );
+    console.log(
+      "📦 Right Chest Inventory",
+      chestInventory
+        .filter((item) => item.amount > 0)
+        .map((item) => `${ObjectTypes[item.type].name} x${item.amount}`)
+        .join(", ") || "empty"
+    );
+
     const energy = Number(await bot.player.getPlayerEnergy());
     const position = await bot.player.getCurrentPosition();
 
@@ -402,24 +430,26 @@ export class EnergizeMode extends BaseBehaviorMode {
     let oakSaplings = 0;
     let otherItems = 0;
 
+    // Items to exclude from "other items" count
+    const excludedTypes = [
+      getObjectIdByName("OakLog"),
+      getObjectIdByName("BirchLog"),
+      getObjectIdByName("SpruceLog"),
+      getObjectIdByName("OakLeaves"),
+      getObjectIdByName("BirchLeaves"),
+      getObjectIdByName("SpruceLeaves"),
+      getObjectIdByName("Battery"),
+    ].filter((id) => id !== undefined);
+
     for (const item of inventory) {
       if (axeTypes.some((axe) => item.type === getObjectIdByName(axe))) {
         axes += item.amount;
       } else if (item.type === oakSaplingId) {
         oakSaplings += item.amount;
-      } else {
+      } else if (!excludedTypes.includes(item.type)) {
         otherItems += item.amount;
       }
     }
-
-    // Determine location
-    const location = determineEnergizeLocation(position);
-
-    // Fetch chest inventory for inventory setup decisions
-    const entityIds = getEnergizeEntityIds();
-    const chestInventory = await bot.inventory.getInventory(
-      entityIds.rightChestEntityId
-    );
 
     // Scan for trees and saplings
     let nearbyTrees = 0;
@@ -431,16 +461,12 @@ export class EnergizeMode extends BaseBehaviorMode {
         throw new Error("Tree farm bounds not configured");
       }
 
-      const corner1 = position3DToVec3(
-        config.areas.energize.treeFarmBounds.corner1
-      );
-      const corner2 = position3DToVec3(
-        config.areas.energize.treeFarmBounds.corner2
-      );
+      const corner1 = config.areas.energize!.treeFarmBounds.corner1;
+      const corner2 = config.areas.energize!.treeFarmBounds.corner2;
 
       // Preload tree farm area using pathfinding cache before scanning
       // This reuses the intelligent caching from pathfinding module
-      await this.pathfindingModule.preloadBlockData(corner1, corner2);
+      await this.pathfindingModule.getChunksInBoundingBox(corner1, corner2);
 
       const trees = await this.treesModule.scanForTrees(corner1, corner2);
       const saplingsNearby = await this.treesModule.scanForSaplings(
@@ -455,10 +481,11 @@ export class EnergizeMode extends BaseBehaviorMode {
     }
 
     const state = {
-      location,
+      location: "unknown",
       position,
       energy,
       inventory,
+      chestInventory,
       // Standard BotState fields (using defaults for farming-specific fields)
       emptyBuckets: 0,
       waterBuckets: 0,
@@ -470,7 +497,6 @@ export class EnergizeMode extends BaseBehaviorMode {
       ungrownPlots: 0,
       unharvestedPlots: 0,
       totalPlots: 0,
-      chestInventory,
       // Extended state for energize mode
       nearbyTrees,
       nearbySaplings,

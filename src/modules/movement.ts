@@ -210,8 +210,8 @@ export class MovementModule extends DustGameBase {
     );
   }
 
-  // A* pathfinding to target Vec2 (x, z coordinates)
-  async pathTo(target: Vec2): Promise<void> {
+  // A* pathfinding to target Vec3 (x, y, z coordinates)
+  async pathTo(target: Vec3): Promise<void> {
     // Get path from pathfinding module
     const path = await this.pathfinding.pathTo(target);
 

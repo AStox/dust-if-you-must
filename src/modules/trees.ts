@@ -1,5 +1,5 @@
 import { DustGameBase } from "../core/base.js";
-import { Vec3 } from "../types/base.js";
+import { Vec3, EntityId } from "../types/base.js";
 import { getObjectIdByName, ObjectTypes } from "../types/objectTypes.js";
 import { packVec3, isValidCoordinate } from "../utils.js";
 import { WorldModule } from "./world.js";
@@ -9,7 +9,6 @@ import { InventoryModule } from "./inventory.js";
 export interface TreeInfo {
   position: Vec3;
   type: TreeType;
-  distance: number;
   logPositions: Vec3[];
   leafPositions: Vec3[];
   isFullyGrown: boolean;
@@ -53,6 +52,13 @@ export class TreesModule extends DustGameBase {
     this.world = new WorldModule();
     this.farming = new FarmingModule();
     this.inventory = new InventoryModule();
+  }
+
+  /**
+   * Clear the cache to get fresh data
+   */
+  clearCache(): void {
+    this.world.clearCache();
   }
   /**
    * Get all tree type mappings from object types
@@ -140,6 +146,40 @@ export class TreesModule extends DustGameBase {
     const dy = pos1.y - pos2.y;
     const dz = pos1.z - pos2.z;
     return Math.sqrt(dx * dx + dy * dy + dz * dz);
+  }
+
+  /**
+   * Get bounding box for a set of positions
+   */
+  private getBoundingBox(positions: Vec3[]): {
+    minX: number;
+    maxX: number;
+    minY: number;
+    maxY: number;
+    minZ: number;
+    maxZ: number;
+  } {
+    if (positions.length === 0) {
+      return { minX: 0, maxX: 0, minY: 0, maxY: 0, minZ: 0, maxZ: 0 };
+    }
+
+    let minX = positions[0].x;
+    let maxX = positions[0].x;
+    let minY = positions[0].y;
+    let maxY = positions[0].y;
+    let minZ = positions[0].z;
+    let maxZ = positions[0].z;
+
+    for (const pos of positions) {
+      minX = Math.min(minX, pos.x);
+      maxX = Math.max(maxX, pos.x);
+      minY = Math.min(minY, pos.y);
+      maxY = Math.max(maxY, pos.y);
+      minZ = Math.min(minZ, pos.z);
+      maxZ = Math.max(maxZ, pos.z);
+    }
+
+    return { minX, maxX, minY, maxY, minZ, maxZ };
   }
 
   /**
@@ -260,7 +300,6 @@ export class TreesModule extends DustGameBase {
           trees.set(treeKey, {
             position: basePos,
             type: treeType.name,
-            distance: 0,
             logPositions,
             leafPositions: [],
             isFullyGrown: true,
@@ -575,6 +614,153 @@ export class TreesModule extends DustGameBase {
     return saplings;
   }
 
+  async scanTree(basePos: Vec3): Promise<TreeInfo> {
+    // First, determine what type of tree this is by checking the base block
+    const baseBlockType = await this.world.getBlockType(basePos);
+    const treeType = this.getTreeTypeByObjectId(baseBlockType);
+
+    if (!treeType) {
+      throw new Error(
+        `No tree found at position (${basePos.x}, ${basePos.y}, ${basePos.z})`
+      );
+    }
+
+    // Load initial chunk containing the base
+    let chunkData = new Map<
+      string,
+      Map<string, { blockType: number; biome: number }>
+    >();
+
+    // Step 1: Collect all logs connected to this base using a single chunk initially
+    const baseChunkPos = {
+      x: Math.floor(basePos.x / 16) * 16,
+      y: Math.floor(basePos.y / 16) * 16,
+      z: Math.floor(basePos.z / 16) * 16,
+    };
+
+    try {
+      const blocks = await this.world.getChunkBlocks(baseChunkPos);
+      const chunkCoord = this.world.toChunkCoord(baseChunkPos);
+      const chunkKey = `${chunkCoord.x},${chunkCoord.y},${chunkCoord.z}`;
+      chunkData.set(chunkKey, blocks);
+    } catch (error) {
+      throw new Error(`Failed to load base chunk: ${error}`);
+    }
+
+    // Expand chunk loading as needed to capture full tree
+    let logPositions: Vec3[] = [];
+    let chunksToLoad = new Set<string>();
+    let previousLogCount = 0;
+
+    // Keep expanding chunks until we have all logs
+    while (true) {
+      logPositions = await this.collectTreeLogs(
+        basePos,
+        treeType.log,
+        chunkData
+      );
+
+      if (logPositions.length === previousLogCount) {
+        break; // No new logs found, we have them all
+      }
+      previousLogCount = logPositions.length;
+
+      // Find bounding box of current logs
+      const logBounds = this.getBoundingBox(logPositions);
+
+      // Expand by 1 block buffer and determine needed chunks
+      const expandedBounds = {
+        minX: logBounds.minX - 1,
+        maxX: logBounds.maxX + 1,
+        minY: logBounds.minY - 1,
+        maxY: logBounds.maxY + 1,
+        minZ: logBounds.minZ - 1,
+        maxZ: logBounds.maxZ + 1,
+      };
+
+      // Find all chunks that intersect the expanded bounds
+      for (
+        let x = Math.floor(expandedBounds.minX / 16) * 16;
+        x <= expandedBounds.maxX;
+        x += 16
+      ) {
+        for (
+          let y = Math.floor(expandedBounds.minY / 16) * 16;
+          y <= expandedBounds.maxY;
+          y += 16
+        ) {
+          for (
+            let z = Math.floor(expandedBounds.minZ / 16) * 16;
+            z <= expandedBounds.maxZ;
+            z += 16
+          ) {
+            const chunkPos = { x, y, z };
+            const chunkCoord = this.world.toChunkCoord(chunkPos);
+            const chunkKey = `${chunkCoord.x},${chunkCoord.y},${chunkCoord.z}`;
+
+            if (!chunkData.has(chunkKey)) {
+              chunksToLoad.add(chunkKey);
+            }
+          }
+        }
+      }
+
+      // Load new chunks in parallel
+      const loadPromises = Array.from(chunksToLoad).map(async (chunkKey) => {
+        const [cx, cy, cz] = chunkKey.split(",").map(Number);
+        const chunkWorldPos = { x: cx * 16, y: cy * 16, z: cz * 16 };
+        try {
+          const blocks = await this.world.getChunkBlocks(chunkWorldPos);
+          chunkData.set(chunkKey, blocks);
+        } catch (error) {
+          console.log(`⚠️ Failed to load chunk ${chunkKey}:`, error);
+        }
+      });
+
+      await Promise.all(loadPromises);
+      chunksToLoad.clear();
+    }
+
+    // Step 2: Collect leaves, but only within 2 blocks of base position to avoid other trees
+    const leafPositions: Vec3[] = [];
+    const maxDistanceFromBase = 2;
+
+    // Search around each log position for leaves, but filter by distance from base
+    for (const logPos of logPositions) {
+      for (let dx = -3; dx <= 3; dx++) {
+        for (let dy = -2; dy <= 4; dy++) {
+          for (let dz = -3; dz <= 3; dz++) {
+            const leafPos = {
+              x: logPos.x + dx,
+              y: logPos.y + dy,
+              z: logPos.z + dz,
+            };
+
+            // Check distance from base to avoid scanning adjacent trees
+            const leafXZ = { x: leafPos.x, y: 0, z: leafPos.z };
+            const baseXZ = { x: basePos.x, y: 0, z: basePos.z };
+            const distanceFromTree = this.calculateDistance(leafXZ, baseXZ);
+            if (distanceFromTree > maxDistanceFromBase) {
+              continue;
+            }
+
+            const blockType = this.getBlockTypeFromChunks(leafPos, chunkData);
+            if (blockType === treeType.leaf) {
+              leafPositions.push(leafPos);
+            }
+          }
+        }
+      }
+    }
+    return {
+      position: basePos,
+      type: treeType.name,
+      logPositions,
+      leafPositions,
+      isFullyGrown: true,
+    };
+  }
+
   /**
    * Chop down a tree completely (all logs and leaves)
    */
@@ -582,6 +768,34 @@ export class TreesModule extends DustGameBase {
     console.log(
       `🪓 Chopping ${tree.type} tree at (${tree.position.x}, ${tree.position.y}, ${tree.position.z})`
     );
+    console.log(tree);
+
+    // Find axe in inventory
+    const inventory = await this.inventory.getInventory(this.characterEntityId);
+    let axeSlot = -1;
+
+    for (let i = 0; i < inventory.length; i++) {
+      const item = inventory[i];
+      const itemType = item.type;
+      // Check for any type of axe
+      if (
+        itemType === getObjectIdByName("WoodenAxe") ||
+        itemType === getObjectIdByName("StoneAxe") ||
+        itemType === getObjectIdByName("IronAxe") ||
+        itemType === getObjectIdByName("DiamondAxe")
+      ) {
+        axeSlot = i;
+        const axeName = ObjectTypes[itemType]?.name || `Unknown_${itemType}`;
+        console.log(`🪓 Using ${axeName} from slot ${axeSlot} for chopping`);
+        break;
+      }
+    }
+
+    if (axeSlot === -1) {
+      console.log(
+        "⚠️ No axe found in inventory - chopping with bare hands (less efficient)"
+      );
+    }
 
     let blocksChopped = 0;
 
@@ -592,25 +806,86 @@ export class TreesModule extends DustGameBase {
         console.log(
           `🪓 Chopping log at (${logPos.x}, ${logPos.y}, ${logPos.z})`
         );
-        await this.executeSystemCall(
-          this.SYSTEM_IDS.MINE_SYSTEM,
-          "mineUntilDestroyed(bytes32,uint96,bytes)",
-          [
-            this.characterEntityId,
-            packVec3(logPos),
-            "0x", // empty extraData
-          ],
-          `Chopping log at (${logPos.x}, ${logPos.y}, ${logPos.z})`
-        );
-        blocksChopped++;
 
-        // Small delay between chops to prevent overwhelming the system
-        await new Promise((resolve) => setTimeout(resolve, 200));
+        if (axeSlot >= 0) {
+          // Use axe for efficient chopping
+          await this.executeSystemCallNonBlocking(
+            this.SYSTEM_IDS.MINE_SYSTEM,
+            "mineUntilDestroyed(bytes32,uint96,uint16,bytes)",
+            [
+              this.characterEntityId,
+              packVec3(logPos),
+              axeSlot,
+              "0x", // empty extraData
+            ],
+            `Chopping log with axe at (${logPos.x}, ${logPos.y}, ${logPos.z})`
+          );
+        } else {
+          throw new Error("No axe found in inventory");
+        }
+        blocksChopped++;
       } catch (error) {
         console.log(
           `⚠️ Failed to chop log at (${logPos.x}, ${logPos.y}, ${logPos.z}): ${error}`
         );
       }
+    }
+
+    // Commit chunks for leaf positions before chopping (for RNG sapling drops)
+    if (tree.leafPositions.length > 0) {
+      const leafBounds = this.getBoundingBox(tree.leafPositions);
+
+      // All 8 corners of the 3D bounding box
+      const corner1 = {
+        x: leafBounds.minX,
+        y: leafBounds.minY,
+        z: leafBounds.minZ,
+      };
+      const corner2 = {
+        x: leafBounds.maxX,
+        y: leafBounds.minY,
+        z: leafBounds.minZ,
+      };
+      const corner3 = {
+        x: leafBounds.minX,
+        y: leafBounds.maxY,
+        z: leafBounds.minZ,
+      };
+      const corner4 = {
+        x: leafBounds.maxX,
+        y: leafBounds.maxY,
+        z: leafBounds.minZ,
+      };
+      const corner5 = {
+        x: leafBounds.minX,
+        y: leafBounds.minY,
+        z: leafBounds.maxZ,
+      };
+      const corner6 = {
+        x: leafBounds.maxX,
+        y: leafBounds.minY,
+        z: leafBounds.maxZ,
+      };
+      const corner7 = {
+        x: leafBounds.minX,
+        y: leafBounds.maxY,
+        z: leafBounds.maxZ,
+      };
+      const corner8 = {
+        x: leafBounds.maxX,
+        y: leafBounds.maxY,
+        z: leafBounds.maxZ,
+      };
+
+      console.log("Committing leaf chunks for RNG sapling drops...");
+      await this.world.commitChunk(corner1);
+      await this.world.commitChunk(corner2);
+      await this.world.commitChunk(corner3);
+      await this.world.commitChunk(corner4);
+      await this.world.commitChunk(corner5);
+      await this.world.commitChunk(corner6);
+      await this.world.commitChunk(corner7);
+      await this.world.commitChunk(corner8);
     }
 
     // Then chop all leaves (for wood/sapling drops)
@@ -619,20 +894,24 @@ export class TreesModule extends DustGameBase {
         console.log(
           `🍃 Chopping leaves at (${leafPos.x}, ${leafPos.y}, ${leafPos.z})`
         );
-        await this.executeSystemCall(
-          this.SYSTEM_IDS.MINE_SYSTEM,
-          "mineUntilDestroyed(bytes32,uint96,bytes)",
-          [
-            this.characterEntityId,
-            packVec3(leafPos),
-            "0x", // empty extraData
-          ],
-          `Chopping leaves at (${leafPos.x}, ${leafPos.y}, ${leafPos.z})`
-        );
-        blocksChopped++;
 
-        // Small delay between chops
-        await new Promise((resolve) => setTimeout(resolve, 100));
+        if (axeSlot >= 0) {
+          // Use axe for efficient chopping
+          await this.executeSystemCallNonBlocking(
+            this.SYSTEM_IDS.MINE_SYSTEM,
+            "mineUntilDestroyed(bytes32,uint96,uint16,bytes)",
+            [
+              this.characterEntityId,
+              packVec3(leafPos),
+              axeSlot,
+              "0x", // empty extraData
+            ],
+            `Chopping leaves with axe at (${leafPos.x}, ${leafPos.y}, ${leafPos.z})`
+          );
+        } else {
+          throw new Error("No axe found in inventory");
+        }
+        blocksChopped++;
       } catch (error) {
         console.log(
           `⚠️ Failed to chop leaves at (${leafPos.x}, ${leafPos.y}, ${leafPos.z}): ${error}`

@@ -45,19 +45,24 @@ export async function selectBestBehaviorMode(
 ): Promise<IBehaviorMode | null> {
   const viableModes: Array<{ mode: IBehaviorMode; priority: number }> = [];
 
-  for (const mode of availableModes) {
-    const isAvailable = await mode.isAvailable(bot);
-    if (isAvailable) {
-      viableModes.push({
-        mode,
-        priority: mode.getPriority(),
-      });
-      console.log(
-        `  ✅ ${mode.name} is available (priority: ${mode.getPriority()})`
-      );
-    } else {
-      console.log(`  ❌ ${mode.name} is not available`);
+  if (availableModes.length > 1) {
+    for (const mode of availableModes) {
+      const isAvailable = await mode.isAvailable(bot);
+      if (isAvailable) {
+        viableModes.push({
+          mode,
+          priority: mode.getPriority(),
+        });
+        console.log(
+          `  ✅ ${mode.name} is available (priority: ${mode.getPriority()})`
+        );
+      } else {
+        console.log(`  ❌ ${mode.name} is not available`);
+      }
     }
+  } else {
+    console.log("mode:", availableModes[0].name);
+    return availableModes[0];
   }
 
   if (viableModes.length === 0) {
@@ -86,9 +91,7 @@ export async function executeBehaviorCycle(
     const selectedMode = await selectBestBehaviorMode(bot, availableModes);
 
     if (!selectedMode) {
-      console.log("⏰ No behavior modes available, waiting...");
-      await new Promise((resolve) => setTimeout(resolve, 30000)); // Wait 30 seconds
-      return false;
+      throw new Error("No behavior mode selected");
     }
 
     // Assess state for the selected mode

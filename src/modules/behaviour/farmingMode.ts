@@ -70,9 +70,6 @@ export const coastPosition: Vec3 = { x: -443, y: 63, z: 489 };
 export const waterPosition: Vec3 = { x: -444, y: 62, z: 489 };
 /** @deprecated Use getFarmingAreas().farmCenter instead */
 export const farmCenter: Vec3 = { x: -401, y: 72, z: 483 }; // Also chest position
-/** @deprecated Use getEntityIds().rightChestEntityId instead */
-export const rightChestEntityId: EntityId =
-  "0x03fffffe7300000049000001e300000000000000000000000000000000000000";
 /** @deprecated Use getFarmingAreas().housePosition instead */
 export const housePosition: Vec3 = { x: -401, y: 72, z: 489 };
 /** @deprecated Use getFarmingAreas().farmCorner1 instead */
@@ -423,6 +420,7 @@ export class FarmingMode extends BaseBehaviorMode {
         try {
           await bot.movement.pathTo({
             x: areas.farmCenter.x,
+            y: areas.farmCenter.y,
             z: areas.farmCenter.z,
           });
           console.log("✅ Successfully reached farm center area");

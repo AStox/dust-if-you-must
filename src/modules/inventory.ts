@@ -170,7 +170,8 @@ export class InventoryModule extends DustGameBase {
     );
   }
 
-  async transferAmount(
+  // Transfer a specific amount of an item type from one entity to another
+  async transferExactAmount(
     fromEntityId: EntityId,
     toEntityId: EntityId,
     itemType: number,
@@ -308,6 +309,194 @@ export class InventoryModule extends DustGameBase {
     }
 
     await this.transfer(fromEntityId, toEntityId, transfers);
+  }
+
+  // Transfer up to a specified amount of an item type, returns actual amount transferred
+  async transferUpToAmount(
+    fromEntityId: EntityId,
+    toEntityId: EntityId,
+    itemType: number,
+    maxAmount: number
+  ): Promise<number> {
+    const slotsWithItemType = await this.getAllSlotsForItemType(
+      itemType,
+      fromEntityId
+    );
+    if (slotsWithItemType.length === 0) {
+      return 0; // No items found, transfer 0
+    }
+
+    // Calculate total available amount
+    const totalAvailable = slotsWithItemType.reduce(
+      (sum, [_, amount]) => sum + amount,
+      0
+    );
+
+    // Transfer up to the requested amount or all available, whichever is less
+    let amountToTransfer = Math.min(maxAmount, totalAvailable);
+
+    if (amountToTransfer === 0) {
+      return 0;
+    }
+
+    console.log(
+      `📦 Transferring ${amountToTransfer} ${getItemName(
+        itemType
+      )} (requested: ${maxAmount}, available: ${totalAvailable})`
+    );
+
+    // Calculate fromSlots - which slots to take from and how much
+    const fromSlots: [number, number][] = [];
+    let amountRemaining = amountToTransfer;
+    for (const slot of slotsWithItemType) {
+      if (slot[1] >= amountRemaining) {
+        fromSlots.push([slot[0], amountRemaining]);
+        amountRemaining = 0;
+      } else {
+        fromSlots.push(slot);
+        amountRemaining -= slot[1];
+      }
+      if (amountRemaining === 0) {
+        break;
+      }
+    }
+
+    // Calculate toSlots - where to put items and how much to add
+    const existingToSlots = await this.getAllSlotsForItemType(
+      itemType,
+      toEntityId
+    );
+    amountRemaining = amountToTransfer;
+    const targetSlots: [number, number][] = []; // [slotIndex, amountToAdd]
+
+    // Get max stack size for this item type
+    const maxStackSize = this.getMaxStackSize(itemType);
+    console.log(
+      `📏 ${getItemName(itemType)} has max stack size: ${maxStackSize}`
+    );
+
+    // First, try to fill existing slots up to maxStackSize
+    for (const [slotIndex, currentAmount] of existingToSlots) {
+      if (currentAmount < maxStackSize && amountRemaining > 0) {
+        const spaceAvailable = maxStackSize - currentAmount;
+        const amountToAdd = Math.min(spaceAvailable, amountRemaining);
+        targetSlots.push([slotIndex, amountToAdd]);
+        amountRemaining -= amountToAdd;
+        console.log(
+          `  📦 Using existing slot ${slotIndex}: adding ${amountToAdd} (${currentAmount} + ${amountToAdd} = ${
+            currentAmount + amountToAdd
+          }/${maxStackSize})`
+        );
+      }
+    }
+
+    // If we still have amount remaining, find and allocate empty slots
+    if (amountRemaining > 0) {
+      console.log(
+        `  🔍 Need ${amountRemaining} more items, finding empty slots...`
+      );
+
+      // Get all empty slots upfront
+      const emptySlots: number[] = [];
+      for (let slot = 0; slot < 40; slot++) {
+        const slotContents = await this.getInventorySlot(slot, toEntityId);
+        if (slotContents?.itemType === 0) {
+          emptySlots.push(slot);
+        }
+      }
+
+      console.log(
+        `  📋 Found ${emptySlots.length} empty slots: [${emptySlots
+          .slice(0, 10)
+          .join(", ")}${emptySlots.length > 10 ? "..." : ""}]`
+      );
+
+      let emptySlotIndex = 0;
+      while (amountRemaining > 0 && emptySlotIndex < emptySlots.length) {
+        const emptySlot = emptySlots[emptySlotIndex];
+        const amountForSlot = Math.min(maxStackSize, amountRemaining);
+        targetSlots.push([emptySlot, amountForSlot]);
+        amountRemaining -= amountForSlot;
+        console.log(
+          `  📦 Using empty slot ${emptySlot}: adding ${amountForSlot}/${maxStackSize}`
+        );
+        emptySlotIndex++;
+      }
+
+      if (amountRemaining > 0) {
+        console.log(
+          `⚠️ No empty slots available! Could only transfer ${
+            amountToTransfer - amountRemaining
+          } out of ${amountToTransfer} requested.`
+        );
+        // Adjust the amount we can actually transfer
+        const actualTransferAmount = amountToTransfer - amountRemaining;
+
+        // Recalculate fromSlots and targetSlots for the reduced amount
+        if (actualTransferAmount === 0) {
+          return 0;
+        }
+
+        // Remove excess items from targetSlots to match actualTransferAmount
+        let totalInTargetSlots = targetSlots.reduce(
+          (sum, [_, amount]) => sum + amount,
+          0
+        );
+        while (
+          totalInTargetSlots > actualTransferAmount &&
+          targetSlots.length > 0
+        ) {
+          const lastSlot = targetSlots[targetSlots.length - 1];
+          const excessAmount = totalInTargetSlots - actualTransferAmount;
+          if (lastSlot[1] <= excessAmount) {
+            // Remove entire slot
+            targetSlots.pop();
+            totalInTargetSlots -= lastSlot[1];
+          } else {
+            // Reduce amount in last slot
+            lastSlot[1] -= excessAmount;
+            totalInTargetSlots -= excessAmount;
+          }
+        }
+
+        // Update amountToTransfer to reflect what we can actually do
+        amountToTransfer = actualTransferAmount;
+        amountRemaining = 0; // We've handled the overflow
+      }
+    }
+
+    // Calculate individual transfers [fromSlot, toSlot, amount]
+    const transfers: [number, number, number][] = [];
+    let targetSlotIndex = 0;
+    let amountUsedFromCurrentTarget = 0; // How much we've used from current target slot capacity
+
+    for (const [fromSlot, fromAmount] of fromSlots) {
+      let amountLeftToTransfer = fromAmount;
+
+      while (amountLeftToTransfer > 0 && targetSlotIndex < targetSlots.length) {
+        const [toSlot, targetCapacity] = targetSlots[targetSlotIndex];
+        const amountLeftInTarget = targetCapacity - amountUsedFromCurrentTarget;
+        const amountToTransferNow = Math.min(
+          amountLeftToTransfer,
+          amountLeftInTarget
+        );
+
+        if (amountToTransferNow > 0) {
+          transfers.push([fromSlot, toSlot, amountToTransferNow]);
+          amountLeftToTransfer -= amountToTransferNow;
+          amountUsedFromCurrentTarget += amountToTransferNow;
+        }
+
+        // If target slot is full, move to next target slot
+        if (amountUsedFromCurrentTarget >= targetCapacity) {
+          targetSlotIndex++;
+          amountUsedFromCurrentTarget = 0;
+        }
+      }
+    }
+
+    await this.transfer(fromEntityId, toEntityId, transfers);
+    return amountToTransfer;
   }
 
   async pickUpAll(entityId: EntityId): Promise<void> {

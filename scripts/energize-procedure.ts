@@ -52,12 +52,6 @@ async function main() {
 
     try {
       await executeBehaviorCycle(bot, [energizeMode]);
-
-      if (cycleCount % 5 === 0) {
-        console.log("\n📈 === Detailed Energize State (Every 5 cycles) ===");
-        const energizeState = await energizeMode.assessState(bot);
-        await logEnergizeState(energizeState);
-      }
     } catch (error) {
       console.error(`❌ Error in behavior cycle ${cycleCount}:`, error);
     }

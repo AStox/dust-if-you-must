@@ -158,7 +158,6 @@ export class FarmingModule extends DustGameBase {
     const fullyGrownAt = BigInt("0x" + fullyGrownAtHex);
 
     const currentTime = BigInt(Math.floor(Date.now() / 1000));
-    console.log("fullyGrown", fullyGrownAt <= currentTime);
     return fullyGrownAt <= currentTime;
   }
 }

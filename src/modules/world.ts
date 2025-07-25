@@ -2,6 +2,8 @@ import { DustGameBase } from "../core/base.js";
 import { Vec3, ObjectTypes, EntityId } from "../types";
 import { ethers } from "ethers";
 import { packVec3 } from "../utils.js";
+import * as fs from "fs";
+import * as path from "path";
 
 export class WorldModule extends DustGameBase {
   // Constants from the original implementation
@@ -11,6 +13,7 @@ export class WorldModule extends DustGameBase {
   private VEC3_BITS = 96n;
 
   public blockCache = new Map<string, { blockType: number; biome: number }>();
+  private chunksDir = path.join(process.cwd(), "chunks");
 
   // Entity Types enum (from original codebase)
   private EntityTypes = {
@@ -23,6 +26,46 @@ export class WorldModule extends DustGameBase {
   // You'll need to find this from your deployed contracts
   private ENTITY_OBJECT_TYPE_TABLE_ID =
     "0x74620000000000000000000000000000456e746974794f626a65637454797065";
+
+  // Ensure chunks directory exists
+  private ensureChunksDir(): void {
+    if (!fs.existsSync(this.chunksDir)) {
+      fs.mkdirSync(this.chunksDir, { recursive: true });
+    }
+  }
+
+  // Get chunk filename from pointer
+  private getChunkFilename(chunkPointer: string): string {
+    return path.join(this.chunksDir, `${chunkPointer}.txt`);
+  }
+
+  // Get chunk bytecode from cache or provider
+  private async getChunkBytecode(chunkPointer: string): Promise<string> {
+    this.ensureChunksDir();
+    const filename = this.getChunkFilename(chunkPointer);
+
+    // Try to read from cache first
+    if (fs.existsSync(filename)) {
+      return fs.readFileSync(filename, "utf8");
+    }
+
+    // Fetch from provider and cache
+    const code = await this.provider.getCode(chunkPointer);
+    fs.writeFileSync(filename, code, "utf8");
+    return code;
+  }
+
+  // Invalidate chunk cache for a specific chunk
+  public invalidateChunkCache(coord: Vec3): void {
+    const worldAddress = this.worldContract.target as string;
+    const chunkCoord = this.toChunkCoord(coord);
+    const chunkPointer = this.getChunkPointer(chunkCoord, worldAddress);
+    const filename = this.getChunkFilename(chunkPointer);
+
+    if (fs.existsSync(filename)) {
+      fs.unlinkSync(filename);
+    }
+  }
 
   /**
    * Pack an [x,y,z] vector into a single uint96 to match Vec3.sol user type
@@ -76,6 +119,10 @@ export class WorldModule extends DustGameBase {
   invalidateBlockCache(coord: Vec3): void {
     const key = `${coord.x},${coord.y},${coord.z}`;
     this.blockCache.delete(key);
+  }
+
+  clearCache(): void {
+    this.blockCache.clear();
   }
 
   async getObjectTypeAt(coord: Vec3): Promise<number> {
@@ -163,9 +210,6 @@ export class WorldModule extends DustGameBase {
     }
 
     await Promise.all(blockPromises);
-    console.log(
-      `📦 Loaded ${chunkBlocks.size} blocks for chunk (${chunkCoord.x}, ${chunkCoord.y}, ${chunkCoord.z})`
-    );
     return chunkBlocks;
   }
 
@@ -367,7 +411,7 @@ export class WorldModule extends DustGameBase {
 
     // Step 2 & 3: Get chunk pointer and check if explored
     const chunkPointer = this.getChunkPointer(chunkCoord, worldAddress);
-    const code = await provider.getCode(chunkPointer);
+    const code = await this.getChunkBytecode(chunkPointer);
 
     if (code === "0x") {
       throw new Error("Chunk not explored");
