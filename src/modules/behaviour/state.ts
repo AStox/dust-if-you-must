@@ -137,10 +137,10 @@ export async function assessCurrentState(bot: DustBot): Promise<BotState> {
 
   // Import farming locations for backward compatibility
   const { coastPosition, farmCenter, housePosition } = await import(
-    "./farmingMode.js"
+    "./farming/farmingMode.js"
   );
 
-  const { generateFarmPlots } = await import("./operations.js");
+  const { generateFarmPlots } = await import("./farmingOperations.js");
 
   const locations: LocationDefinition[] = [
     { name: "coast", position: coastPosition },

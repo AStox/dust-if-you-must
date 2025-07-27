@@ -34,6 +34,7 @@ export interface FarmingAreas {
 export interface EnergizeAreas {
   treeFarmBounds: AreaBounds;
   powerStoneLocation: Position3D;
+  plantingBlockType?: "Grass" | "Dirt" | "Moss"; // Block type to plant saplings on, defaults to "Dirt"
 }
 
 /**

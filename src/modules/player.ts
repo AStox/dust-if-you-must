@@ -9,7 +9,6 @@ export class PlayerModule extends DustGameBase {
   async checkStatusAndActivate(bot: DustBot): Promise<void> {
     const playerState = await bot.getPlayerState();
     let playerReady = false;
-
     switch (playerState) {
       case PlayerState.DEAD:
         console.log("💀 Player is DEAD - spawning character...");
@@ -165,7 +164,7 @@ export class PlayerModule extends DustGameBase {
 
   // Get comprehensive player state
   async getPlayerState(entityId?: EntityId): Promise<PlayerState> {
-    await this.activate();
+    // await this.activate();
     const playerId = entityId || this.characterEntityId;
 
     console.log(`🔍 Checking state for player: ${playerId}`);

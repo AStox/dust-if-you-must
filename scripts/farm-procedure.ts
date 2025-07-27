@@ -4,7 +4,7 @@ import { DustBot } from "../src/index.js";
 import {
   FarmingMode,
   logFarmingState,
-} from "../src/modules/behaviour/farmingMode.js";
+} from "../src/modules/behaviour/farming/farmingMode.js";
 import { executeBehaviorCycle } from "../src/modules/behaviour/decision.js";
 import { loadOperationalConfig } from "../src/config/loader.js";
 

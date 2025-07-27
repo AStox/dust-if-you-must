@@ -4,7 +4,7 @@ import { DustBot } from "../src/index.js";
 import {
   EnergizeMode,
   logEnergizeState,
-} from "../src/modules/behaviour/energizeMode.js";
+} from "../src/modules/behaviour/energize/energizeMode.js";
 import { executeBehaviorCycle } from "../src/modules/behaviour/decision.js";
 import { loadOperationalConfig } from "../src/config/loader.js";
 

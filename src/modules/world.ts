@@ -219,11 +219,6 @@ export class WorldModule extends DustGameBase {
     startY: number,
     batchSize: number = 10
   ): Promise<number> {
-    console.log(
-      `🔍 Getting ground level at [${x}, ${z}, ${startY}] (batch size: ${batchSize})`
-    );
-
-    console.log("scanning for ground level");
     // Scan from top to bottom in batches to find ground level
     for (let batchStart = startY; batchStart >= -100; batchStart -= batchSize) {
       const batchEnd = Math.max(batchStart - batchSize + 1, -100);
@@ -448,7 +443,7 @@ export class WorldModule extends DustGameBase {
 
   async commitChunk(coord: Vec3): Promise<void> {
     console.log("committing chunk", coord);
-    const chunkCoord = packVec3(this.toChunkCoord(coord));
+    const chunkCoord = packVec3(coord);
     console.log("chunkCoord", chunkCoord);
     await this.executeSystemCall(
       this.SYSTEM_IDS.NATURE_SYSTEM,

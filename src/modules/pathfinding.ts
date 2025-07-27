@@ -265,6 +265,7 @@ export class PathfindingModule extends DustGameBase {
       `📊 Cache performance: ${this.cacheHits} hits, ${this.cacheMisses} misses (${cacheHitRate}% hit rate)`
     );
     console.log(`📦 Block cache size: ${this.blockDataCache.size} blocks`);
+    console.log("-".repeat(60));
 
     return path;
   }
@@ -715,7 +716,11 @@ export class PathfindingModule extends DustGameBase {
         console.log(`⏱️ Total block lookup time: ${totalBlockLookupTime}ms`);
 
         // Log the successful path with iteration info
-        console.log(`\n📋 Successful path with discovery iterations:`);
+        console.log(
+          `${"-".repeat(
+            30
+          )} Successful path with discovery iterations: ${"-".repeat(30)}`
+        );
         const pathWithIterations: Array<{ pos: Vec3; iteration: number }> = [];
         let currentPathNode: PathNode | null = currentNode;
         while (currentPathNode) {
@@ -1785,9 +1790,6 @@ export class PathfindingModule extends DustGameBase {
 
     // Remove the first position (current position) and get remaining steps
     const steps = path.slice(1);
-    console.log(
-      `📦 Splitting ${steps.length} steps into batches based on move units...`
-    );
 
     // Split steps into batches based on move unit limits
     const batches: Vec3[][] = [];

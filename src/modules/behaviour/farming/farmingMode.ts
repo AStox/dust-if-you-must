@@ -1,7 +1,12 @@
-import { DustBot } from "../../index.js";
-import { EntityId, Vec3, BotState, UtilityAction } from "../../types/base.js";
-import { getObjectIdByName } from "../../types/objectTypes.js";
-import { BaseBehaviorMode } from "./behaviorMode.js";
+import { DustBot } from "../../../index.js";
+import {
+  EntityId,
+  Vec3,
+  BotState,
+  UtilityAction,
+} from "../../../types/base.js";
+import { getObjectIdByName } from "../../../types/objectTypes.js";
+import { BaseBehaviorMode } from "../behaviorMode.js";
 import {
   fillBuckets,
   walkToHouse,
@@ -13,9 +18,8 @@ import {
   harvestFarmPlots,
   growSeededFarmPlots,
   transferToFromChest,
-} from "./operations.js";
-import { getOperationalConfig } from "../../config/loader.js";
-import { position3DToVec3 } from "../../config/types.js";
+} from "../farmingOperations.js";
+import { getOperationalConfig } from "../../../config/loader.js";
 
 // Farming-specific constants
 export const MAX_ENERGY: number = 817600000000000000;
@@ -29,12 +33,12 @@ export function getFarmingAreas() {
   const farming = config.areas.farming;
 
   return {
-    coastPosition: position3DToVec3(farming.coastPosition),
-    waterPosition: position3DToVec3(farming.waterSource),
-    farmCenter: position3DToVec3(farming.farmCenter),
-    housePosition: position3DToVec3(farming.housePosition),
-    farmCorner1: position3DToVec3(farming.farmBounds.corner1),
-    farmCorner2: position3DToVec3(farming.farmBounds.corner2),
+    coastPosition: farming.coastPosition,
+    waterPosition: farming.waterSource,
+    farmCenter: farming.farmCenter,
+    housePosition: farming.housePosition,
+    farmCorner1: farming.farmBounds.corner1,
+    farmCorner2: farming.farmBounds.corner2,
   };
 }
 
@@ -194,10 +198,10 @@ export class FarmingMode extends BaseBehaviorMode {
         };
 
         console.log("Committing farm chunks for growing...");
-        await bot.world.commitChunk(farmCornerTopLeft);
-        await bot.world.commitChunk(farmCornerBotRight);
-        await bot.world.commitChunk(farmCornerBotLeft);
-        await bot.world.commitChunk(farmCornerTopRight);
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopLeft));
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotRight));
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotLeft));
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopRight));
 
         const farmPlots = await generateFarmPlots();
         await growSeededFarmPlots(bot, farmPlots);
@@ -228,10 +232,10 @@ export class FarmingMode extends BaseBehaviorMode {
         };
 
         console.log("Committing farm chunks for harvesting...");
-        await bot.world.commitChunk(farmCornerTopLeft);
-        await bot.world.commitChunk(farmCornerBotRight);
-        await bot.world.commitChunk(farmCornerBotLeft);
-        await bot.world.commitChunk(farmCornerTopRight);
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopLeft));
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotRight));
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotLeft));
+        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopRight));
 
         const farmPlots = await generateFarmPlots();
         await harvestFarmPlots(bot, farmPlots);

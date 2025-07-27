@@ -95,13 +95,26 @@ export async function executeBehaviorCycle(
     }
 
     // Assess state for the selected mode
+    const assessStart = Date.now();
     const state = await selectedMode.assessState(bot);
+    const assessTime = Date.now() - assessStart;
+    console.log(`⏱️ assessState took ${assessTime}ms for ${selectedMode.name}`);
 
     // Update bot.state with fresh assessment for use in action execution
     bot.state = state;
 
     // Select and execute action
+    console.log(
+      "=".repeat(30) +
+        " Selecting action for mode: " +
+        selectedMode.name +
+        " ".repeat(30)
+    );
     const action = await selectedMode.selectAction(state);
+
+    console.log(
+      "=".repeat(30) + " Executing action: " + action.name + " ".repeat(30)
+    );
     await selectedMode.execute(bot, action);
 
     return true;

@@ -22,8 +22,33 @@ export class BuildingModule extends DustGameBase {
         toolSlot,
         "0x", // empty extraData
       ],
-      "Mining block"
+      "Mining block",
+      false
     );
+  }
+
+  async mineNonBlocking(coord: Vec3, toolSlot: number = 0): Promise<void> {
+    if (!isValidCoordinate(coord)) {
+      throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
+    }
+
+    console.log(
+      `⛏️ Mining at (${coord.x}, ${coord.y}, ${coord.z}) with tool from slot ${toolSlot}`
+    );
+
+    const result = await this.executeSystemCallNonBlocking(
+      this.SYSTEM_IDS.MINE_SYSTEM,
+      "mine(bytes32,uint96,uint16,bytes)",
+      [
+        this.characterEntityId,
+        packVec3(coord),
+        toolSlot,
+        "0x", // empty extraData
+      ],
+      "Mining block non-blocking",
+      false
+    );
+    console.log(`✅ Mining result: ${result}`);
   }
 
   // Mine until block is destroyed (MineSystem)

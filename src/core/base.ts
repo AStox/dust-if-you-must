@@ -25,6 +25,11 @@ export abstract class DustGameBase {
   protected worldContract: ethers.Contract;
   public characterEntityId: EntityId;
 
+  // Global nonce management - shared across all instances
+  private static currentNonce: number = 0;
+  private static nonceLock: boolean = false;
+  private static nonceInitialized: boolean = false;
+
   // MUD System IDs - based on actual Dust game systems
   protected readonly SYSTEM_IDS = {
     // Core movement and activation
@@ -78,11 +83,40 @@ export abstract class DustGameBase {
       "utf8"
     );
 
+    // Regular contract for normal system calls
     this.worldContract = new ethers.Contract(
       process.env.WORLD_ADDRESS!,
       worldABI,
       this.wallet
     );
+
+    // Initialize nonce on startup
+    this.initializeNonce();
+  }
+
+  /**
+   * Initialize nonce counter with current on-chain nonce (only once)
+   */
+  private async initializeNonce(): Promise<void> {
+    if (DustGameBase.nonceInitialized) return;
+
+    DustGameBase.currentNonce = await this.wallet.getNonce();
+    DustGameBase.nonceInitialized = true;
+    console.log(`🔄 Initialized nonce counter: ${DustGameBase.currentNonce}`);
+  }
+
+  /**
+   * Get next nonce with thread safety
+   */
+  private async getNextNonce(): Promise<number> {
+    // Simple spinlock for nonce safety
+    while (DustGameBase.nonceLock) {
+      await new Promise((resolve) => setTimeout(resolve, 1));
+    }
+    DustGameBase.nonceLock = true;
+    const nonce = DustGameBase.currentNonce++;
+    DustGameBase.nonceLock = false;
+    return nonce;
   }
 
   private txMonitor = new TransactionMonitor();
@@ -99,165 +133,49 @@ export abstract class DustGameBase {
       // Encode the function call data
       const callData = this.encodeCall(functionSig, params);
 
+      // Get managed nonce
+      const nonce = await this.getNextNonce();
+
       // Use optimized gas settings for Redstone chain
       let gasLimit: bigint;
       let maxFeePerGas: bigint;
       let maxPriorityFeePerGas: bigint;
 
-      gasLimit = BigInt(process.env.GAS_LIMIT || "200000");
+      gasLimit = BigInt(process.env.GAS_LIMIT || "700000");
       maxFeePerGas = ethers.parseUnits("0.000002", "gwei");
       maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei");
 
-      // Call the system through the World contract
+      // Call the system through the World contract with managed nonce
       const tx = await this.worldContract.call(systemId, callData, {
+        nonce,
         gasLimit: gasLimit,
         maxFeePerGas: maxFeePerGas,
         maxPriorityFeePerGas: maxPriorityFeePerGas,
         value: 0,
       });
 
-      console.log(`🔄 Transaction sent: ${tx.hash} (${description})`);
+      console.log(
+        `🔄 Transaction sent: ${tx.hash} (${description}) (nonce: ${nonce})`
+      );
 
-      // For movement transactions, monitor with enhanced error reporting
-      if (functionSig === "move(bytes32,uint96[])") {
-        // Enhanced monitoring for movement transactions
-        const receiptPromise = tx.wait(1);
-        receiptPromise
-          .then((receipt: ethers.TransactionReceipt) => {
-            if (receipt.status === 1) {
-              console.log(`✅ Movement confirmed: ${description} (${tx.hash})`);
-            } else {
-              console.error(
-                `❌ Movement transaction failed: ${description} (${tx.hash})`
-              );
-              console.error(`   Gas used: ${receipt.gasUsed}/${gasLimit}`);
-              console.error(`   Block number: ${receipt.blockNumber}`);
-              this.logDetailedMoveError(params, description, tx.hash);
-            }
-          })
-          .catch((error: any) => {
-            console.error(
-              `❌ Movement transaction error: ${description} (${tx.hash})`
-            );
-            console.error(`   Error details:`, error);
-            this.logDetailedMoveError(params, description, tx.hash);
-
-            // If it's a revert with data, try to decode it
-            if (error.data) {
-              try {
-                const decodedError = this.decodeRevertReason(error.data);
-                console.error(`   Decoded revert reason: ${decodedError}`);
-              } catch (decodeError) {
-                console.error(`   Raw error data: ${error.data}`);
-              }
-            }
-          });
-      } else {
-        // Add non-movement transactions to monitoring with termination
-        const receiptPromise = tx.wait(1);
-        this.txMonitor.addTransaction(
-          tx.hash,
-          description,
-          receiptPromise,
-          terminateOnFailure
-        );
-      }
+      // Add non-movement transactions to monitoring with termination
+      const receiptPromise = tx.wait(1);
+      this.txMonitor.addTransaction(
+        tx.hash,
+        description,
+        receiptPromise,
+        terminateOnFailure
+      );
 
       return tx.hash;
     } catch (error) {
       console.error(`❌ Failed to send transaction: ${description}:`, error);
 
-      // Enhanced error logging for movement transactions
-      if (functionSig === "move(bytes32,uint96[])") {
-        this.logDetailedMoveError(params, description, "SEND_FAILED");
-      }
-
       throw error;
     }
   }
 
-  // Enhanced error logging for movement transactions
-  private logDetailedMoveError(
-    params: any[],
-    description: string,
-    txHash: string
-  ): void {
-    console.error(`🔍 MOVEMENT TRANSACTION DEBUG INFO (${txHash}):`);
-    console.error(`   Description: ${description}`);
-
-    if (params && params.length >= 2) {
-      const [characterEntityId, packedCoords] = params;
-      console.error(`   Character Entity ID: ${characterEntityId}`);
-      console.error(
-        `   Number of coordinates: ${packedCoords?.length || "unknown"}`
-      );
-
-      if (Array.isArray(packedCoords)) {
-        console.error(`   Packed coordinates:`);
-        packedCoords.forEach((packed: any, index: number) => {
-          try {
-            // Attempt to unpack the coordinate for debugging
-            const unpacked = this.unpackVec3ForDebug(packed);
-            console.error(
-              `     ${index + 1}. ${packed} -> (${unpacked.x}, ${unpacked.y}, ${
-                unpacked.z
-              })`
-            );
-          } catch (error) {
-            console.error(`     ${index + 1}. ${packed} (failed to unpack)`);
-          }
-        });
-      }
-    }
-
-    console.error(`   Timestamp: ${new Date().toISOString()}`);
-    console.error(`   Block timestamp: ${Date.now()}`);
-  }
-
-  // Helper to unpack Vec3 for debugging (simplified version)
-  private unpackVec3ForDebug(packed: any): { x: number; y: number; z: number } {
-    try {
-      const bigintValue = BigInt(packed);
-
-      // Unpack according to the game's packing format
-      // This is a simplified version - you may need to adjust based on actual packing
-      const x = Number((bigintValue >> BigInt(64)) & BigInt(0xffffffff));
-      const y = Number((bigintValue >> BigInt(32)) & BigInt(0xffffffff));
-      const z = Number(bigintValue & BigInt(0xffffffff));
-
-      // Convert from unsigned to signed 32-bit integers
-      return {
-        x: x > 0x7fffffff ? x - 0x100000000 : x,
-        y: y > 0x7fffffff ? y - 0x100000000 : y,
-        z: z > 0x7fffffff ? z - 0x100000000 : z,
-      };
-    } catch (error) {
-      return { x: -999999, y: -999999, z: -999999 };
-    }
-  }
-
-  // Decode revert reason from error data
-  private decodeRevertReason(data: string): string {
-    try {
-      // Standard revert reason decoding
-      if (data.startsWith("0x08c379a0")) {
-        // Standard revert with message
-        const reasonBytes = data.slice(138); // Skip selector and length
-        return ethers.toUtf8String("0x" + reasonBytes);
-      } else if (data.startsWith("0x4e487b71")) {
-        // Panic error
-        const errorCode = data.slice(138, 140);
-        return `Panic error code: 0x${errorCode}`;
-      } else {
-        // Custom error or other
-        return `Custom error: ${data}`;
-      }
-    } catch (error) {
-      return `Failed to decode: ${data}`;
-    }
-  }
-
-  // Execute a system call using the new MUD pattern
+  // Execute a system call using the new MUD pattern with managed nonce
   protected async executeSystemCall(
     systemId: string,
     functionSig: string,
@@ -271,23 +189,27 @@ export abstract class DustGameBase {
       console.log("params", params);
       const callData = this.encodeCall(functionSig, params);
 
+      // Get managed nonce
+      const nonce = await this.getNextNonce();
+
       let gasLimit: bigint;
       let maxFeePerGas: bigint;
       let maxPriorityFeePerGas: bigint;
 
-      gasLimit = BigInt(process.env.GAS_LIMIT || "200000");
+      gasLimit = BigInt(process.env.GAS_LIMIT || "700000");
       maxFeePerGas = ethers.parseUnits("0.000002", "gwei");
       maxPriorityFeePerGas = ethers.parseUnits("0.0000001", "gwei");
 
-      // Call the system through the World contract
+      // Call the system through the World contract with managed nonce
       const tx = await this.worldContract.call(systemId, callData, {
+        nonce,
         gasLimit: gasLimit,
         maxFeePerGas: maxFeePerGas,
         maxPriorityFeePerGas: maxPriorityFeePerGas,
         value: 0,
       });
 
-      console.log(`🔄 Transaction sent: ${tx.hash}`);
+      console.log(`🔄 Transaction sent: ${tx.hash} (nonce: ${nonce})`);
 
       const receipt = await tx.wait(1);
 
@@ -412,7 +334,7 @@ export abstract class DustGameBase {
       return gasEstimate + (gasEstimate * 20n) / 100n;
     } catch (error) {
       console.warn("⚠️ Gas estimation failed, using default");
-      return BigInt(process.env.GAS_LIMIT || "500000");
+      return BigInt(process.env.GAS_LIMIT || "700000");
     }
   }
 
@@ -509,7 +431,7 @@ export class TransactionMonitor {
         this.pendingTransactions.delete(hash);
       })
       .catch((error) => {
-        console.error(`❌ Background error: ${description} (${hash}):`, error);
+        console.error(`❌ Background error: ${description} (${hash})`);
         if (terminateOnFailure) {
           this.terminateOnFailure(description, hash);
         }

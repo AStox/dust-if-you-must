@@ -92,7 +92,9 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
     const sortedActions = availableActions.sort((a, b) => b.score - a.score);
 
     // Clean decision logging - just scores and final choice
-    console.log(`\n🎯 ${this.name} Action Scores:`);
+    console.log(
+      `${"-".repeat(30)} ${this.name} Action Scores: ${"-".repeat(30)}`
+    );
     sortedActions.forEach((item) =>
       console.log(`  ${item.action.name}: ${item.score.toFixed(1)}`)
     );
@@ -104,7 +106,6 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
   }
 
   async execute(bot: DustBot, action: UtilityAction): Promise<void> {
-    console.log(`\n🎯 Executing ${this.name} action: ${action.name}`);
     await action.execute(bot);
   }
 
