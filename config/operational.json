@@ -50,6 +50,7 @@
           "z": 429
         }
       },
+      "chunkSize": 10,
       "powerStoneLocation": {
         "x": -398,
         "y": 72,

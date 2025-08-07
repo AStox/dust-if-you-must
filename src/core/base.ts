@@ -106,6 +106,14 @@ export abstract class DustGameBase {
   }
 
   /**
+   * Refresh nonce from network - useful when nonce gets out of sync
+   */
+  public async refreshNonce(): Promise<void> {
+    DustGameBase.currentNonce = await this.wallet.getNonce();
+    console.log(`🔄 Refreshed nonce counter: ${DustGameBase.currentNonce}`);
+  }
+
+  /**
    * Get next nonce with thread safety
    */
   private async getNextNonce(): Promise<number> {

@@ -14,6 +14,8 @@
     "dev": "tsx --watch src/index.ts",
     "farm": "tsx scripts/farm-procedure.ts",
     "energize": "tsx scripts/energize-procedure.ts",
+    "survival": "tsx scripts/survival-procedure.ts",
+    "comprehensive": "tsx scripts/comprehensive-procedure.ts",
     "move": "tsx scripts/simple-move.ts",
     "pickup": "tsx scripts/pickup-all.ts",
     "toChunkCoord": "tsx scripts/to-chunk-coord.ts",

@@ -1,7 +1,7 @@
-import { getOperationalConfig } from "../../config/loader.js";
-import { DustBot } from "../../index.js";
-import { Vec3 } from "../../types/base.js";
-import { getObjectIdByName, ObjectTypes } from "../../types/objectTypes.js";
+import { getOperationalConfig } from "../../../config/loader.js";
+import { DustBot } from "../../../index.js";
+import { Vec3 } from "../../../types/base.js";
+import { getObjectIdByName, ObjectTypes } from "../../../types/objectTypes.js";
 import {
   coastPosition,
   waterPosition,
@@ -10,7 +10,50 @@ import {
   farmCorner1,
   farmCorner2,
   getFarmingParameters,
-} from "./farming/farmingMode.js";
+} from "./farmingMode.js";
+
+/**
+ * Commit chunks around the player's current position (3x3x3 grid)
+ */
+async function commitChunksAroundPlayer(bot: DustBot): Promise<void> {
+  const currentPos = await bot.player.getCurrentPosition();
+  const playerChunk = bot.world.toChunkCoord(currentPos);
+
+  console.log(
+    `📦 Committing chunks around player at chunk (${playerChunk.x}, ${playerChunk.y}, ${playerChunk.z})...`
+  );
+
+  const commitPromises = [];
+  for (let dx = -1; dx <= 1; dx++) {
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dz = -1; dz <= 1; dz++) {
+        const chunkToCommit = {
+          x: playerChunk.x + dx,
+          y: playerChunk.y + dy,
+          z: playerChunk.z + dz,
+        };
+
+        const commitPromise = bot.world
+          .commitChunk(chunkToCommit)
+          .then(() => {
+            console.log(
+              `✅ Committed chunk (${chunkToCommit.x}, ${chunkToCommit.y}, ${chunkToCommit.z})`
+            );
+          })
+          .catch((error) => {
+            console.log(
+              `⚠️ Failed to commit chunk (${chunkToCommit.x}, ${chunkToCommit.y}, ${chunkToCommit.z}): ${error}`
+            );
+          });
+
+        commitPromises.push(commitPromise);
+      }
+    }
+  }
+
+  await Promise.all(commitPromises);
+  console.log(`✅ Chunk commits completed`);
+}
 
 export async function walkToCoast(bot: DustBot) {
   console.log("=".repeat(60));
@@ -22,7 +65,11 @@ export async function walkToCoast(bot: DustBot) {
 
   try {
     await bot.checkPlayerStatus("Moving to coast");
-    await bot.movement.moveTowards(coastPosition);
+    await bot.movement.pathTo({
+      x: coastPosition.x,
+      y: coastPosition.y,
+      z: coastPosition.z,
+    });
     console.log("✅ Reached the coast!");
   } catch (error) {
     throw error;
@@ -66,7 +113,11 @@ export async function walkToHouse(bot: DustBot) {
   );
 
   try {
-    await bot.movement.moveTowards(housePosition);
+    await bot.movement.pathTo({
+      x: housePosition.x,
+      y: housePosition.y,
+      z: housePosition.z,
+    });
     console.log("✅ Reached the house!");
   } catch (error) {
     console.error("❌ Failed to reach the house:", error);
@@ -85,7 +136,11 @@ export async function walkToFarmCenter(bot: DustBot) {
 
   try {
     await bot.checkPlayerStatus("Moving to farm center");
-    await bot.movement.moveTowards(farmCenter);
+    await bot.movement.pathTo({
+      x: farmCenter.x,
+      y: farmCenter.y,
+      z: farmCenter.z,
+    });
     console.log("✅ Reached the farm center!");
   } catch (error) {
     console.error("❌ Failed to reach the farm center:", error);
@@ -109,11 +164,19 @@ export async function generateFarmPlots(): Promise<Vec3[]> {
   return farmPlots;
 }
 
-export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
+export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[], waterBuckets: number) {
   console.log("=".repeat(60));
   console.log("🚜 WATERING FARM PLOTS");
   console.log("=".repeat(60));
 
+  console.log(`💧 Starting with ${waterBuckets} water buckets`);
+
+  if (waterBuckets === 0) {
+    console.log("🪣 No water buckets available");
+    return;
+  }
+
+  // Get actual inventory to find water bucket slots
   const inventory = await bot.inventory.getInventory(
     bot.player.characterEntityId
   );
@@ -125,11 +188,6 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
     .map(({ index }) => index);
 
   console.log("waterBucketSlots", waterBucketSlots);
-
-  if (waterBucketSlots.length === 0) {
-    console.log("🪣 No water buckets available");
-    return;
-  }
 
   // Water plots one by one until we run out of water or plots
   let waterBucketIndex = 0;
@@ -160,10 +218,18 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   }
 }
 
-export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
+export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[], wheatSeeds: number, inventory: any[]) {
   console.log("=".repeat(60));
   console.log("🚜 SEEDING FARM PLOTS");
   console.log("=".repeat(60));
+
+  let remainingSeeds = wheatSeeds;
+  console.log(`🌾 Starting with ${remainingSeeds} wheat seeds`);
+  
+  // Debug: Check what seeds are actually in the inventory
+  const seedId = getObjectIdByName("WheatSeed")!;
+  const seedItems = inventory.filter((item) => item.type === seedId);
+  console.log(`🔍 Debug: Found ${seedItems.length} seed items in inventory:`, seedItems.map(item => `${item.amount} seeds in slot`));
 
   // Water plots one by one until we run out of water or plots
   for (const plot of farmPlots) {
@@ -189,20 +255,24 @@ export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
       continue; // Skip can only seed where there isn't wheat already
     }
 
-    const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
-    );
-
-    const seedId = getObjectIdByName("WheatSeed")!;
-    const seedCount = inventory.filter((item) => item.type === seedId).length;
-
-    if (seedCount === 0) {
+    if (remainingSeeds === 0) {
       console.log("🪣 Out of seeds - stopping seeding");
       break;
     }
 
     try {
+      const seedId = getObjectIdByName("WheatSeed")!;
+      console.log(`🌱 Attempting to plant seed type ${seedId} at (${plot.x}, ${plot.y}, ${plot.z})`);
+      
+      // Debug: check current inventory right before planting
+      const currentInventory = await bot.inventory.getInventory(bot.player.characterEntityId);
+      const currentSeedItems = currentInventory.filter((item) => item.type === seedId);
+      console.log(`🔍 Real-time inventory check: ${currentSeedItems.length} seed items:`, 
+        currentSeedItems.map(item => `${item.amount} seeds`));
+      
       await bot.farming.plantSeedType(plot, seedId);
+      remainingSeeds--;
+      console.log(`✅ Seeded plot at (${plot.x}, ${plot.y}, ${plot.z}), ${remainingSeeds} seeds remaining`);
     } catch (error) {
       console.log(
         `⚠️ Failed to seed plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
@@ -215,6 +285,9 @@ export async function growSeededFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   console.log("=".repeat(60));
   console.log("🚜 GROWING SEEDED FARM PLOTS");
   console.log("=".repeat(60));
+
+  // Commit chunks around player before growing
+  await commitChunksAroundPlayer(bot);
 
   // TODO: do each plot in parallel
   // Check all plots in parallel to identify which need growing
@@ -265,6 +338,9 @@ export async function harvestFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   console.log("🚜 HARVESTING FARM PLOTS");
   console.log("=".repeat(60));
 
+  // Commit chunks around player before harvesting
+  await commitChunksAroundPlayer(bot);
+
   for (const plot of farmPlots) {
     // console.log("checking plot", plot);
 
@@ -298,21 +374,63 @@ export async function transferToFromChest(bot: DustBot) {
     `📊 Current inventory: ${currentState.emptyBuckets} buckets, ${currentState.wheatSeeds} seeds, ${currentState.wheat} wheat, ${currentState.slop} slop`
   );
 
+  // === 0. CLEAN UP NON-FARMING ITEMS FIRST ===
+  console.log("🧹 Cleaning up non-farming items from inventory...");
+  const config = getOperationalConfig();
+  const playerInventory = await bot.inventory.getInventory(
+    bot.player.characterEntityId
+  );
+
+  const bucketId = getObjectIdByName("Bucket")!;
+  const waterBucketId = getObjectIdByName("WaterBucket")!;
+  const wheatSeedId = getObjectIdByName("WheatSeed")!;
+  const wheatId = getObjectIdByName("Wheat")!;
+
+  // Define allowed items for farming inventory
+  const allowedItems = new Set([
+    bucketId, // Empty buckets
+    waterBucketId, // Water buckets
+    wheatSeedId, // Wheat seeds
+    wheatId, // Wheat
+    0, // Empty slots (type 0)
+  ]);
+
+  // Find items that don't belong in farming inventory
+  for (const item of playerInventory) {
+    if (!allowedItems.has(item.type) && item.amount > 0) {
+      const itemName =
+        Object.keys(getObjectIdByName as any).find(
+          (name) => (getObjectIdByName as any)(name) === item.type
+        ) || `Unknown_${item.type}`;
+
+      console.log(`📤 Transferring ${item.amount}x ${itemName} to chest (cleanup)`);
+      try {
+        await bot.inventory.transferExactAmount(
+          bot.player.characterEntityId,
+          config.entities.chests?.rightChest,
+          item.type,
+          item.amount
+        );
+        console.log(`✅ Successfully transferred ${item.amount}x ${itemName}`);
+      } catch (error) {
+        console.log(`❌ Failed to transfer ${itemName}: ${error}`);
+      }
+    }
+  }
+
   // Get chest inventory once for efficiency
   console.log("🔍 Checking chest inventory...");
-  const config = getOperationalConfig();
   const chestInventory = await bot.inventory.getInventory(
     config.entities.chests?.rightChest
   );
 
-  const bucketId = getObjectIdByName("Bucket")!;
-  const wheatSeedId = getObjectIdByName("WheatSeed")!;
-  const wheatId = getObjectIdByName("Wheat")!;
-  const slopId = getObjectIdByName("WheatSlop")!;
-
   // Calculate what's available in chest
   const bucketsInChest = chestInventory
     .filter((item) => item.type === bucketId)
+    .reduce((acc, item) => acc + item.amount, 0);
+
+  const waterBucketsInChest = chestInventory
+    .filter((item) => item.type === waterBucketId)
     .reduce((acc, item) => acc + item.amount, 0);
 
   const seedsInChest = chestInventory
@@ -324,177 +442,99 @@ export async function transferToFromChest(bot: DustBot) {
     .reduce((acc, item) => acc + item.amount, 0);
 
   console.log(
-    `📦 Chest contains: ${bucketsInChest} buckets, ${seedsInChest} seeds, ${wheatInChest} wheat`
+    `📦 Chest contains: ${bucketsInChest} empty buckets, ${waterBucketsInChest} water buckets, ${seedsInChest} seeds, ${wheatInChest} wheat`
   );
 
   const params = getFarmingParameters();
 
-  // === 1. TRANSFER BUCKETS (target: 5) ===
-  if (currentState.emptyBuckets < params.targetBuckets) {
-    const bucketsNeeded = params.targetBuckets - currentState.emptyBuckets;
-    console.log(`🪣 Need ${bucketsNeeded} more buckets to reach 5`);
+  // === 1. TRANSFER EMPTY BUCKETS (target: 5) ===
+  const totalBucketsNeeded = params.targetBuckets;
+  console.log(`🪣 Need ${totalBucketsNeeded} total buckets`);
 
-    if (bucketsInChest > 0) {
-      const bucketsToTransfer = Math.min(bucketsNeeded, bucketsInChest);
-      console.log(
-        `📤 Transferring ${bucketsToTransfer} buckets from chest to player`
-      );
-
-      try {
-        await bot.inventory.transferExactAmount(
-          config.entities.chests?.rightChest,
-          bot.player.characterEntityId,
-          bucketId,
-          bucketsToTransfer
-        );
-        console.log(`✅ Successfully transferred ${bucketsToTransfer} buckets`);
-      } catch (error) {
-        console.log(`❌ Failed to transfer buckets: ${error}`);
-      }
-    } else {
-      console.log("⚠️ No buckets available in chest");
-    }
-  } else {
-    console.log("✅ Already have enough buckets (5 or more)");
-  }
-
-  // === 2. TRANSFER SEEDS (target: 99) ===
-  if (currentState.wheatSeeds < params.targetSeeds) {
-    const seedsNeeded = params.targetSeeds - currentState.wheatSeeds;
-    console.log(`🌱 Need ${seedsNeeded} more seeds to reach 99`);
-
-    if (seedsInChest > 0) {
-      const seedsToTransfer = Math.min(seedsNeeded, seedsInChest);
-      console.log(
-        `📤 Transferring ${seedsToTransfer} seeds from chest to player`
-      );
-
-      try {
-        await bot.inventory.transferExactAmount(
-          config.entities.chests?.rightChest,
-          bot.player.characterEntityId,
-          wheatSeedId,
-          seedsToTransfer
-        );
-        console.log(`✅ Successfully transferred ${seedsToTransfer} seeds`);
-      } catch (error) {
-        console.log(`❌ Failed to transfer seeds: ${error}`);
-      }
-    } else {
-      console.log("⚠️ No seeds available in chest");
-    }
-  } else {
-    console.log("✅ Already have enough seeds (99 or more)");
-  }
-
-  // === 3. TRANSFER WHEAT (target: 99) ===
-  if (currentState.wheat < 99) {
-    const wheatNeeded = 99 - currentState.wheat;
-    console.log(`🌾 Need ${wheatNeeded} more wheat to reach 99`);
-
-    if (wheatInChest > 0) {
-      const wheatToTransfer = Math.min(wheatNeeded, wheatInChest);
-      console.log(
-        `📤 Transferring ${wheatToTransfer} wheat from chest to player`
-      );
-
-      try {
-        await bot.inventory.transferExactAmount(
-          config.entities.chests?.rightChest,
-          bot.player.characterEntityId,
-          wheatId,
-          wheatToTransfer
-        );
-        console.log(`✅ Successfully transferred ${wheatToTransfer} wheat`);
-      } catch (error) {
-        console.log(`❌ Failed to transfer wheat: ${error}`);
-      }
-    } else {
-      console.log("⚠️ No wheat available in chest");
-    }
-  } else {
-    console.log("✅ Already have enough wheat (99 or more)");
-  }
-
-  // === 4. TRANSFER SLOP TO CHEST (cleanup) ===
-  if (currentState.slop > 0) {
+  if (bucketsInChest > 0) {
+    const bucketsToTransfer = Math.min(totalBucketsNeeded, bucketsInChest);
     console.log(
-      `📤 Transferring ${currentState.slop} slop from player to chest`
+      `📤 Transferring ${bucketsToTransfer} empty buckets from chest to player`
     );
 
     try {
       await bot.inventory.transferExactAmount(
-        bot.player.characterEntityId,
         config.entities.chests?.rightChest,
-        slopId,
-        currentState.slop
+        bot.player.characterEntityId,
+        bucketId,
+        bucketsToTransfer
       );
-      console.log(
-        `✅ Successfully transferred ${currentState.slop} slop to chest`
-      );
+      console.log(`✅ Successfully transferred ${bucketsToTransfer} empty buckets`);
     } catch (error) {
-      console.log(`❌ Failed to transfer slop: ${error}`);
+      console.log(`❌ Failed to transfer empty buckets: ${error}`);
     }
   } else {
-    console.log("ℹ️ No slop to transfer");
+    console.log("⚠️ No empty buckets available in chest");
   }
 
-  // === 5. TRANSFER ANY OTHER ITEMS TO CHEST (cleanup) ===
-  console.log("🧹 Cleaning up non-farming items...");
-  const playerInventory = await bot.inventory.getInventory(
-    bot.player.characterEntityId
-  );
-
-  // Define allowed items for farming inventory
-  const allowedItems = new Set([
-    bucketId, // Empty buckets
-    wheatSeedId, // Wheat seeds
-    wheatId, // Wheat
-    0, // Empty slots (type 0)
-  ]);
-
-  // Find items that don't belong in farming inventory
-  const itemsToTransfer: { itemType: number; amount: number; name: string }[] =
-    [];
-
-  for (const item of playerInventory) {
-    if (!allowedItems.has(item.type) && item.amount > 0) {
-      // Find the name of this item for logging
-      const itemName =
-        Object.keys(getObjectIdByName as any).find(
-          (name) => (getObjectIdByName as any)(name) === item.type
-        ) || `Unknown_${item.type}`;
-
-      itemsToTransfer.push({
-        itemType: item.type,
-        amount: item.amount,
-        name: itemName,
-      });
-    }
-  }
-
-  if (itemsToTransfer.length > 0) {
+  // === 2. TRANSFER WATER BUCKETS ===
+  if (waterBucketsInChest > 0) {
     console.log(
-      `🗑️ Found ${itemsToTransfer.length} types of non-farming items to transfer:`
+      `📤 Transferring ${waterBucketsInChest} water buckets from chest to player`
     );
 
-    for (const item of itemsToTransfer) {
-      console.log(`  📦 ${item.amount}x ${item.name} (ID: ${item.itemType})`);
-
-      try {
-        await bot.inventory.transferExactAmount(
-          bot.player.characterEntityId,
-          config.entities.chests?.rightChest,
-          item.itemType,
-          item.amount
-        );
-        console.log(`  ✅ Transferred ${item.amount}x ${item.name} to chest`);
-      } catch (error) {
-        console.log(`  ❌ Failed to transfer ${item.name}: ${error}`);
-      }
+    try {
+      await bot.inventory.transferExactAmount(
+        config.entities.chests?.rightChest,
+        bot.player.characterEntityId,
+        waterBucketId,
+        waterBucketsInChest
+      );
+      console.log(`✅ Successfully transferred ${waterBucketsInChest} water buckets`);
+    } catch (error) {
+      console.log(`❌ Failed to transfer water buckets: ${error}`);
     }
   } else {
-    console.log("✅ No non-farming items found - inventory is clean");
+    console.log("ℹ️ No water buckets available in chest");
+  }
+
+  // === 3. TRANSFER SEEDS (target: 99) ===
+  if (seedsInChest > 0) {
+    const seedsToTransfer = Math.min(params.targetSeeds, seedsInChest);
+    console.log(
+      `📤 Transferring ${seedsToTransfer} seeds from chest to player`
+    );
+
+    try {
+      await bot.inventory.transferExactAmount(
+        config.entities.chests?.rightChest,
+        bot.player.characterEntityId,
+        wheatSeedId,
+        seedsToTransfer
+      );
+      console.log(`✅ Successfully transferred ${seedsToTransfer} seeds`);
+    } catch (error) {
+      console.log(`❌ Failed to transfer seeds: ${error}`);
+    }
+  } else {
+    console.log("⚠️ No seeds available in chest");
+  }
+
+  // === 4. TRANSFER WHEAT (target: 99) ===
+  if (wheatInChest > 0) {
+    const wheatToTransfer = Math.min(99, wheatInChest);
+    console.log(
+      `📤 Transferring ${wheatToTransfer} wheat from chest to player`
+    );
+
+    try {
+      await bot.inventory.transferExactAmount(
+        config.entities.chests?.rightChest,
+        bot.player.characterEntityId,
+        wheatId,
+        wheatToTransfer
+      );
+      console.log(`✅ Successfully transferred ${wheatToTransfer} wheat`);
+    } catch (error) {
+      console.log(`❌ Failed to transfer wheat: ${error}`);
+    }
+  } else {
+    console.log("⚠️ No wheat available in chest");
   }
 
   console.log("🔄 Comprehensive inventory setup completed");

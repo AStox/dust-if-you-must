@@ -94,7 +94,7 @@ export class FarmingModule extends DustGameBase {
 
   async plantSeedType(coord: Vec3, seedType: number): Promise<void> {
     const seedSlot = await this.inventory.getSlotForItemType(seedType);
-    if (seedSlot[0] === 0) {
+    if (seedSlot[0] === -1) {
       throw new Error(`Seed type ${seedType} not found in inventory`);
     }
     await this.plant(coord, seedSlot[0]);

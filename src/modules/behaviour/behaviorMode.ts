@@ -106,7 +106,7 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
   }
 
   async execute(bot: DustBot, action: UtilityAction): Promise<void> {
-    await action.execute(bot);
+    await action.execute(bot, bot.state);
   }
 
   getPriority(): number {

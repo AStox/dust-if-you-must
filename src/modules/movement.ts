@@ -212,10 +212,64 @@ export class MovementModule extends DustGameBase {
 
   // A* pathfinding to target Vec3 (x, y, z coordinates)
   async pathTo(target: Vec3): Promise<void> {
-    // Get path from pathfinding module
-    const path = await this.pathfinding.pathTo(target);
+    let currentPos = await this.player.getCurrentPosition();
+    if (!currentPos) {
+      throw new Error("Cannot determine current position");
+    }
+    
+    let attempts = 0;
+    const maxAttempts = 10; // Prevent infinite loops
+    
+    while (
+      (currentPos.x !== target.x || currentPos.y !== target.y || currentPos.z !== target.z) &&
+      attempts < maxAttempts
+    ) {
+      attempts++;
+      console.log(`\n🔄 Pathfinding attempt ${attempts}/${maxAttempts}`);
+      console.log(`📍 Current: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`);
+      console.log(`🎯 Target:  (${target.x}, ${target.y}, ${target.z})`);
+      
+      // Get path from pathfinding module (may be partial)
+      const path = await this.pathfinding.pathTo(target);
 
-    // Execute path
-    await this.pathfinding.executePath(path);
+      // Execute path
+      try {
+        await this.pathfinding.executePath(path);
+      } catch (error) {
+        // Check if this is a physics displacement error
+        if (error instanceof Error && error.message.includes('Physics displacement detected')) {
+          console.log(`🔄 Physics displacement detected during path execution - will retry from new position`);
+          console.log(`🔧 Error: ${error.message}`);
+          // Continue to the position check and retry logic below
+        } else {
+          // Re-throw other errors
+          throw error;
+        }
+      }
+      
+      // Get new position after executing path
+      const newPos = await this.player.getCurrentPosition();
+      if (!newPos) {
+        throw new Error("Cannot determine position after movement");
+      }
+      
+      // Check if we made progress
+      const oldDistance = this.calculateChebyshevDistance(currentPos, target);
+      const newDistance = this.calculateChebyshevDistance(newPos, target);
+      
+      if (newDistance >= oldDistance) {
+        console.log(`⚠️ No progress made (${oldDistance} -> ${newDistance}), stopping pathfinding`);
+        break;
+      }
+      
+      console.log(`✅ Progress: ${oldDistance} -> ${newDistance} blocks remaining`);
+      currentPos = newPos;
+    }
+    
+    if (currentPos.x === target.x && currentPos.y === target.y && currentPos.z === target.z) {
+      console.log(`🎉 Successfully reached target after ${attempts} attempts!`);
+    } else {
+      console.log(`⚠️ Pathfinding incomplete after ${attempts} attempts. Final position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`);
+    }
   }
 }

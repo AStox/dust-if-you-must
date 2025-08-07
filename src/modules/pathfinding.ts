@@ -191,6 +191,127 @@ export class PathfindingModule extends DustGameBase {
     console.log("🧹 Pathfinding cache cleared for fresh cycle");
   }
 
+  // Validate target and adjust if necessary to find a valid standing position
+  private async validateAndAdjustTarget(target: Vec3): Promise<Vec3> {
+    const MAX_HEIGHT_CHECK = 10; // Maximum blocks to check above/below target
+
+    try {
+      console.log(
+        `🔍 Checking target block type at (${target.x}, ${target.y}, ${target.z})...`
+      );
+      // Check if target block is passthrough
+      const targetBlockType = await this.world.getBlockType(target);
+      const targetObjectType = ObjectTypes[targetBlockType];
+      console.log(
+        `🔍 Target block type: ${targetBlockType} (${
+          targetObjectType?.name || "Unknown"
+        }), passThrough: ${targetObjectType?.passThrough || false}`
+      );
+
+      if (targetObjectType?.passThrough) {
+        // Target is already passthrough, check if it's a valid standing position
+        const validPosition = await this.findValidStandingPosition(target);
+        if (validPosition) {
+          return validPosition;
+        }
+      }
+
+      // Target is not passthrough or not a valid standing position
+      // Check blocks above until we find a valid standing position
+      for (
+        let heightOffset = 1;
+        heightOffset <= MAX_HEIGHT_CHECK;
+        heightOffset++
+      ) {
+        const checkPos = {
+          x: target.x,
+          y: target.y + heightOffset,
+          z: target.z,
+        };
+
+        const validPosition = await this.findValidStandingPosition(checkPos);
+        if (validPosition) {
+          console.log(
+            `🎯 Found valid standing position ${heightOffset} blocks above target`
+          );
+          return validPosition;
+        }
+      }
+
+      // Check blocks below if nothing found above
+      for (
+        let heightOffset = 1;
+        heightOffset <= MAX_HEIGHT_CHECK;
+        heightOffset++
+      ) {
+        const checkPos = {
+          x: target.x,
+          y: target.y - heightOffset,
+          z: target.z,
+        };
+
+        const validPosition = await this.findValidStandingPosition(checkPos);
+        if (validPosition) {
+          console.log(
+            `🎯 Found valid standing position ${heightOffset} blocks below target`
+          );
+          return validPosition;
+        }
+      }
+
+      // If no valid position found anywhere, abort pathfinding
+      throw new Error(
+        `❌ No valid standing position found within ${MAX_HEIGHT_CHECK} blocks above or below target (${target.x}, ${target.y}, ${target.z})`
+      );
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        error.message.includes("No valid standing position found")
+      ) {
+        throw error; // Re-throw our own validation errors
+      }
+      throw new Error(
+        `❌ Error validating target (${target.x}, ${target.y}, ${target.z}): ${error}`
+      );
+    }
+  }
+
+  // Check if a position is a valid standing position for the player
+  private async findValidStandingPosition(pos: Vec3): Promise<Vec3 | null> {
+    try {
+      // Check the block at the position (player's feet)
+      const feetBlockType = await this.world.getBlockType(pos);
+      const feetObjectType = ObjectTypes[feetBlockType];
+
+      // Check the block above (player's head)
+      const headPos = { x: pos.x, y: pos.y + 1, z: pos.z };
+      const headBlockType = await this.world.getBlockType(headPos);
+      const headObjectType = ObjectTypes[headBlockType];
+
+      // Check the block below (what player stands on)
+      const groundPos = { x: pos.x, y: pos.y - 1, z: pos.z };
+      const groundBlockType = await this.world.getBlockType(groundPos);
+      const groundObjectType = ObjectTypes[groundBlockType];
+
+      // Valid standing position requires:
+      // 1. Feet position is passthrough (player can occupy this space)
+      // 2. Head position is passthrough (player's head can fit)
+      // 3. Ground position is NOT passthrough (solid block to stand on)
+      if (
+        feetObjectType?.passThrough &&
+        headObjectType?.passThrough &&
+        groundObjectType &&
+        !groundObjectType.passThrough
+      ) {
+        return pos;
+      }
+
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
   // A* pathfinding to target Vec3 (x, y, z coordinates)
   async pathTo(target: Vec3): Promise<Vec3[]> {
     const startTime = Date.now();
@@ -237,19 +358,55 @@ export class PathfindingModule extends DustGameBase {
 
     console.log(`🎯 Target position: (${target.x}, ${target.y}, ${target.z})`);
 
+    // Validate and adjust target if necessary
+    console.log(`🔍 STARTING TARGET VALIDATION...`);
+    const adjustedTarget = await this.validateAndAdjustTarget(target);
+    console.log(`🔍 TARGET VALIDATION COMPLETE`);
+    if (
+      adjustedTarget.x !== target.x ||
+      adjustedTarget.y !== target.y ||
+      adjustedTarget.z !== target.z
+    ) {
+      console.log(
+        `🎯 Adjusted target position: (${adjustedTarget.x}, ${adjustedTarget.y}, ${adjustedTarget.z})`
+      );
+    } else {
+      console.log(`✅ Target position is valid, no adjustment needed`);
+    }
+
     // Preload block data for pathfinding area
     const preloadStartTime = Date.now();
     await this.preloadBlockData(currentPos);
 
     // Find path using A* with heuristic weighting
     const pathStartTime = Date.now();
-    const path = await this.findPath(currentPos, target, heuristicWeight);
+    const path = await this.findPath(
+      currentPos,
+      adjustedTarget,
+      heuristicWeight
+    );
     console.log(
       `⏱️ A* pathfinding completed in ${Date.now() - pathStartTime}ms`
     );
 
     if (!path || path.length === 0) {
       throw new Error("No path found to target");
+    }
+
+    // Check if this is a partial path (doesn't reach the target)
+    const lastPosition = path[path.length - 1];
+    const isPartialPath =
+      lastPosition.x !== target.x ||
+      lastPosition.y !== target.y ||
+      lastPosition.z !== target.z;
+
+    if (isPartialPath) {
+      const remainingDistance = this.calculateDistance(lastPosition, target);
+      console.log(
+        `🚀 Executing partial path: ${
+          path.length
+        } steps, ${remainingDistance.toFixed(2)} blocks remaining to target`
+      );
     }
 
     console.log(`📍 Path found with ${path.length} steps`);
@@ -588,7 +745,7 @@ export class PathfindingModule extends DustGameBase {
         Math.pow(end.y - start.y, 2) +
         Math.pow(end.z - start.z, 2)
     );
-    const maxIterations = Math.floor(distance * 100);
+    const maxIterations = Math.max(10000, Math.floor(distance * 100));
     console.log(
       `📏 Distance to target: ${distance.toFixed(
         1
@@ -756,12 +913,160 @@ export class PathfindingModule extends DustGameBase {
           continue;
         }
 
-        // Calculate costs with heuristic weighting
-        const gCost =
+        // Calculate costs with heuristic weighting and physics penalties
+        const baseMovementCost = this.calculateDistance(
+          currentNode.position,
+          neighbor
+        );
+
+        // Calculate physics-based penalties BEFORE checking if move is valid
+        const dy = neighbor.y - currentNode.position.y;
+        let physicsPenalty = 0;
+
+        // Heavy penalty for accumulated jumps (exponential cost increase)
+        if (dy > 0) {
+          const jumpPenalty = Math.pow(currentNode.jumps + 1, 2) * 2.0; // Quadratic jump penalty
+          physicsPenalty += jumpPenalty;
+        }
+
+        // Penalty for high fall heights (dangerous territory)
+        if (currentNode.fallHeight > 1) {
+          const fallPenalty = currentNode.fallHeight * 3.0;
+          physicsPenalty += fallPenalty;
+        }
+
+        // Penalty for high move unit consumption (energy efficiency)
+        if (currentNode.moveUnits > MAX_MOVE_UNITS_PER_BLOCK * 0.7) {
+          const energyPenalty = 10.0; // High energy consumption penalty
+          physicsPenalty += energyPenalty;
+        }
+
+        // Add movement type differentiation based on terrain
+        let terrainPenalty = 0;
+        try {
+          const blockType = await this.getCachedBlockType(neighbor);
+          const objectType = ObjectTypes[blockType];
+
+          // Add extra cost for difficult terrain
+          if (objectType?.name?.toLowerCase().includes("water")) {
+            terrainPenalty += 2.0; // Swimming is slower
+          } else if (objectType?.name?.toLowerCase().includes("lava")) {
+            terrainPenalty += 10.0; // Lava is very dangerous/expensive
+          }
+
+          // Slight preference for ground-level paths (Y <= 70 is typically ground level)
+          if (neighbor.y > 75) {
+            terrainPenalty += 1.0; // Mild penalty for high altitude (tree canopy)
+          }
+        } catch (error) {
+          // If we can't get block type, add small penalty for uncertainty
+          terrainPenalty += 0.5;
+        }
+
+        // Add horizontal directional bias (x,z plane only) to favor moves toward target
+        const horizontalDirectionToTarget = {
+          x: end.x - currentNode.position.x,
+          z: end.z - currentNode.position.z,
+        };
+        const horizontalMoveDirection = {
+          x: neighbor.x - currentNode.position.x,
+          z: neighbor.z - currentNode.position.z,
+        };
+
+        // Normalize both horizontal vectors
+        const targetMagnitude = Math.sqrt(
+          horizontalDirectionToTarget.x * horizontalDirectionToTarget.x +
+            horizontalDirectionToTarget.z * horizontalDirectionToTarget.z
+        );
+        const moveMagnitude = Math.sqrt(
+          horizontalMoveDirection.x * horizontalMoveDirection.x +
+            horizontalMoveDirection.z * horizontalMoveDirection.z
+        );
+
+        let directionalBias = 0;
+        if (targetMagnitude > 0 && moveMagnitude > 0) {
+          // Calculate dot product of normalized horizontal vectors
+          const dotProduct =
+            (horizontalDirectionToTarget.x * horizontalMoveDirection.x +
+              horizontalDirectionToTarget.z * horizontalMoveDirection.z) /
+            (targetMagnitude * moveMagnitude);
+
+          // STRONG horizontal bias: make direct paths strongly preferred
+          if (dotProduct > 0.99) {
+            directionalBias = -100.0; // Near-perfect alignment - very strong bonus to ensure greedy straight-line movement
+          } else if (dotProduct > 0.9) {
+            directionalBias = -30.0; // Very good alignment - strong bonus
+          } else if (dotProduct > 0.5) {
+            directionalBias = -5.0; // Some alignment - small bonus
+          } else if (dotProduct > 0) {
+            directionalBias = 10.0; // Slight alignment - small penalty
+          } else {
+            directionalBias = 50.0; // Moving away from target - big penalty
+          }
+        }
+
+        let gCost =
           currentNode.gCost +
-          this.calculateDistance(currentNode.position, neighbor);
+          baseMovementCost +
+          physicsPenalty +
+          terrainPenalty +
+          directionalBias;
+
         const hCost = this.calculateHeuristic(neighbor, end);
+
+        // SPECIAL CASE: If this neighbor IS the target, give it maximum priority
+        if (
+          neighbor.x === end.x &&
+          neighbor.y === end.y &&
+          neighbor.z === end.z
+        ) {
+          const originalGCost = gCost;
+          gCost = currentNode.gCost - 1000.0; // Massive bonus to ensure target is always chosen
+          console.log(
+            `🎯 TARGET DETECTED! Applying massive priority bonus: ${originalGCost.toFixed(
+              3
+            )} -> ${gCost.toFixed(3)}`
+          );
+        }
+
         const fCost = gCost + hCost * heuristicWeight;
+
+        // DEBUG: Log cost breakdown for critical decision points (when bot might deviate from straight path)
+        const isDebugNeighbor = isDebugCoordinate(neighbor);
+        if (isDebugNeighbor) {
+          console.log(
+            `\n🔍 COST BREAKDOWN for move from (${currentNode.position.x}, ${currentNode.position.y}, ${currentNode.position.z}) to (${neighbor.x}, ${neighbor.y}, ${neighbor.z}):`
+          );
+          console.log(
+            `   📏 Base movement cost: ${baseMovementCost.toFixed(3)}`
+          );
+          console.log(`   ⚖️ Physics penalty: ${physicsPenalty.toFixed(3)}`);
+          console.log(`   🌍 Terrain penalty: ${terrainPenalty.toFixed(3)}`);
+          console.log(`   🧭 Directional bias: ${directionalBias.toFixed(3)}`);
+
+          // Show directional calculation details
+          if (targetMagnitude > 0 && moveMagnitude > 0) {
+            const dotProduct =
+              (horizontalDirectionToTarget.x * horizontalMoveDirection.x +
+                horizontalDirectionToTarget.z * horizontalMoveDirection.z) /
+              (targetMagnitude * moveMagnitude);
+            console.log(
+              `   🎯 Dot product (alignment): ${dotProduct.toFixed(3)}`
+            );
+            console.log(
+              `   📐 Direction to target: (${horizontalDirectionToTarget.x}, ${horizontalDirectionToTarget.z})`
+            );
+            console.log(
+              `   📐 Move direction: (${horizontalMoveDirection.x}, ${horizontalMoveDirection.z})`
+            );
+          }
+
+          console.log(
+            `   💰 Total gCost: ${gCost.toFixed(3)} | hCost: ${hCost.toFixed(
+              3
+            )} | fCost: ${fCost.toFixed(3)}`
+          );
+        }
 
         // Check if this path to neighbor is better
         const existingNode = openSet.find(
@@ -899,14 +1204,18 @@ export class PathfindingModule extends DustGameBase {
             }
           }
 
-          // Re-enable move unit limit constraint
+          // Check move unit limit constraint
           if (newMoveUnits > MAX_MOVE_UNITS_PER_BLOCK) {
             if (isDebugNeighbor) {
               console.log(
-                `   ❌ REJECTED: Move unit limit exceeded - ${newMoveUnits} > ${MAX_MOVE_UNITS_PER_BLOCK} (MAX_MOVE_UNITS_PER_BLOCK)`
+                `   ⚠️ MOVE UNIT LIMIT REACHED - ${newMoveUnits} > ${MAX_MOVE_UNITS_PER_BLOCK} (MAX_MOVE_UNITS_PER_BLOCK)`
+              );
+              console.log(
+                `   🚀 PARTIAL PATH STRATEGY: Will return best path found so far and continue from new position`
               );
             }
-            // Skip this neighbor - exceeds move unit limit
+            // Instead of rejecting, mark that we've hit the move unit limit
+            // The pathfinding will return the best partial path found so far
             continue;
           }
 
@@ -964,11 +1273,40 @@ export class PathfindingModule extends DustGameBase {
       }
     }
 
-    console.log(`❌ No path found after ${iterationCount} iterations`);
+    console.log(
+      `⚠️ Complete path not found after ${iterationCount} iterations`
+    );
     console.log(
       `⏱️ Total neighbor generation + validation time: ${totalNeighborTime}ms`
     );
     console.log(`⏱️ Total block lookup time: ${totalBlockLookupTime}ms`);
+
+    // Check if we found a meaningful partial path
+    if (
+      closestNode &&
+      closestDistance < this.calculateDistance(start, end) * 0.8
+    ) {
+      console.log(
+        `\n🚀 RETURNING PARTIAL PATH: Made significant progress toward target`
+      );
+      console.log(
+        `📏 Distance remaining: ${closestDistance.toFixed(2)} blocks (${(
+          (closestDistance / this.calculateDistance(start, end)) *
+          100
+        ).toFixed(1)}% of original distance)`
+      );
+
+      // Return the partial path to closest position
+      const partialPath: Vec3[] = [];
+      let currentPathNode: PathNode | null = closestNode;
+
+      while (currentPathNode) {
+        partialPath.unshift(currentPathNode.position);
+        currentPathNode = currentPathNode.parent;
+      }
+
+      return partialPath;
+    }
 
     // Debug: Show closest approach to target
     console.log("\n🔍 PATHFINDING DEBUG ANALYSIS:");
@@ -1098,12 +1436,6 @@ export class PathfindingModule extends DustGameBase {
         Math.abs(coord.x - pos.x) <= 3 && Math.abs(coord.z - pos.z) <= 3
     );
 
-    if (anyDebugCoords) {
-      console.log(
-        `\n🔍 DEBUG NEIGHBORS: Getting neighbors for (${pos.x}, ${pos.y}, ${pos.z})`
-      );
-    }
-
     // Check 8 spaces around the player and the player's current position + or - 1 block in the y direction
     const directions = [
       { x: 1, z: 0 }, // East
@@ -1133,13 +1465,6 @@ export class PathfindingModule extends DustGameBase {
 
         if (newPos.x === pos.x && newPos.z === pos.z && newPos.y === pos.y) {
           continue;
-        }
-
-        // DEBUG: Log ALL generated neighbors
-        if (anyDebugCoords) {
-          console.log(
-            `🔍 DEBUG NEIGHBORS: Generated neighbor (${newPos.x}, ${newPos.y}, ${newPos.z}) from dir(${dir.x}, ${dir.z}) yOffset=${yOffset}`
-          );
         }
 
         const isDebugNeighbor = isDebugCoordinate(newPos);
@@ -1199,23 +1524,11 @@ export class PathfindingModule extends DustGameBase {
           );
         }
 
-        if (anyDebugCoords) {
-          console.log(
-            `🔍 DEBUG NEIGHBORS: ✅ Added to potential neighbors: (${newPos.x}, ${newPos.y}, ${newPos.z})`
-          );
-        }
-
         potentialNeighbors.push(newPos);
       }
     }
 
     const totalPossibleNeighbors = directions.length * 3 - 1; // 9 directions * 3 Y offsets each (-1, 0, +1) minus current position
-
-    if (anyDebugCoords) {
-      console.log(
-        `🔍 DEBUG NEIGHBORS: Generated ${potentialNeighbors.length} potential neighbors (expected ${totalPossibleNeighbors})`
-      );
-    }
 
     // OPTIMIZATION: Inline validation to eliminate duplicate validation calls
     const neighbors: Vec3[] = [];
@@ -1254,13 +1567,6 @@ export class PathfindingModule extends DustGameBase {
           }, ${newPos.z}) - ${isValid ? "VALID" : `INVALID: ${failureReason}`}`
         );
       }
-    }
-
-    // Debug logging summary
-    if (anyDebugCoords) {
-      console.log(
-        `🔍 DEBUG NEIGHBORS: Inline validation processed ${potentialNeighbors.length} potential neighbors, ${neighbors.length} valid`
-      );
     }
 
     if (neighbors.length === 0) {
@@ -1759,11 +2065,24 @@ export class PathfindingModule extends DustGameBase {
 
   // Calculate actual distance between two positions
   private calculateDistance(from: Vec3, to: Vec3): number {
-    return Math.sqrt(
-      Math.pow(to.x - from.x, 2) +
-        Math.pow(to.y - from.y, 2) +
-        Math.pow(to.z - from.z, 2)
-    );
+    const dx = to.x - from.x;
+    const dy = to.y - from.y;
+    const dz = to.z - from.z;
+
+    // Base Euclidean distance
+    const baseDistance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // Apply heavy penalty for vertical movement (especially upward)
+    let verticalPenalty = 0;
+    if (dy > 0) {
+      // Upward movement (jumping) - very expensive
+      verticalPenalty = dy * 5.0; // 5x penalty for each block climbed
+    } else if (dy < 0) {
+      // Downward movement (falling) - moderate penalty
+      verticalPenalty = Math.abs(dy) * 0.5; // 0.5x penalty for falling
+    }
+
+    return baseDistance + verticalPenalty;
   }
 
   // Reconstruct path from goal to start
@@ -1886,12 +2205,91 @@ export class PathfindingModule extends DustGameBase {
         // terminateOnFailure defaults to true, so errors will be thrown
       );
 
-      // Update current tracking position to the last coordinate in this batch
+      // Get actual player position after batch execution (accounts for gravity/physics)
       if (batch.length > 0) {
-        currentTrackingPos = batch[batch.length - 1];
+        const actualPos = await this.player.getCurrentPosition();
+        if (!actualPos) {
+          throw new Error("Cannot determine position after batch execution");
+        }
+
+        const intendedPos = batch[batch.length - 1];
+        currentTrackingPos = actualPos;
+
         console.log(
           `📍 Updated tracking position to: (${currentTrackingPos.x}, ${currentTrackingPos.y}, ${currentTrackingPos.z})`
         );
+        console.log(
+          `🎯 Intended final position: (${intendedPos.x}, ${intendedPos.y}, ${intendedPos.z})`
+        );
+        console.log(
+          `📍 Actual final position: (${actualPos.x}, ${actualPos.y}, ${actualPos.z})`
+        );
+
+        // Check if gravity/physics moved the player
+        if (
+          actualPos.x !== intendedPos.x ||
+          actualPos.y !== intendedPos.y ||
+          actualPos.z !== intendedPos.z
+        ) {
+          console.log(
+            `⚠️ Physics applied: intended (${intendedPos.x}, ${intendedPos.y}, ${intendedPos.z}) -> actual (${actualPos.x}, ${actualPos.y}, ${actualPos.z})`
+          );
+
+          // Adjust remaining batches to start from actual position
+          if (batchIndex < batches.length - 1) {
+            console.log(
+              `🔧 Adjusting remaining ${
+                batches.length - batchIndex - 1
+              } batches to start from actual position`
+            );
+
+            // Check if the physics displacement makes continuing impossible
+            const nextBatch = batches[batchIndex + 1];
+            if (nextBatch && nextBatch.length > 0) {
+              const originalStart = nextBatch[0];
+              const distanceToNextStep = this.calculateDistance(
+                actualPos,
+                originalStart
+              );
+
+              if (distanceToNextStep > 2.0) {
+                console.log(
+                  `❌ Physics displacement too large - distance ${distanceToNextStep.toFixed(
+                    2
+                  )} > 2.0`
+                );
+                console.log(
+                  `🚀 Re-pathfinding from actual position (${actualPos.x}, ${actualPos.y}, ${actualPos.z}) to target`
+                );
+
+                // Throw a specific error to trigger re-pathfinding from the movement module
+                throw new Error(
+                  `Physics displacement detected: player moved from intended (${
+                    intendedPos.x
+                  }, ${intendedPos.y}, ${intendedPos.z}) to actual (${
+                    actualPos.x
+                  }, ${actualPos.y}, ${
+                    actualPos.z
+                  }) - distance ${distanceToNextStep.toFixed(2)} > 2.0`
+                );
+              }
+
+              // Update the first coordinate of the next batch
+              nextBatch[0] = actualPos;
+              console.log(
+                `📍 Batch ${batchIndex + 2} start: (${originalStart.x}, ${
+                  originalStart.y
+                }, ${originalStart.z}) -> (${actualPos.x}, ${actualPos.y}, ${
+                  actualPos.z
+                })`
+              );
+            }
+          }
+        } else {
+          console.log(
+            `✅ No physics displacement detected - player is at intended position`
+          );
+        }
       }
 
       console.log(

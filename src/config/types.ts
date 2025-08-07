@@ -33,8 +33,8 @@ export interface FarmingAreas {
  */
 export interface EnergizeAreas {
   treeFarmBounds: AreaBounds;
+  chunkSize: number;
   powerStoneLocation: Position3D;
-  plantingBlockType?: "Grass" | "Dirt" | "Moss"; // Block type to plant saplings on, defaults to "Dirt"
 }
 
 /**
@@ -54,10 +54,17 @@ export interface ChestEntities {
 }
 
 /**
- * Force field entity configurations for energy operations
+ * Force field entity IDs for energy operations
  */
 export interface ForceFieldEntities {
   primaryForceField?: EntityId;
+}
+
+/**
+ * Power stone entity IDs for crafting operations
+ */
+export interface PowerStoneEntities {
+  powerStone?: EntityId;
 }
 
 /**
@@ -66,6 +73,7 @@ export interface ForceFieldEntities {
 export interface GameEntities {
   chests: ChestEntities;
   forceFields?: ForceFieldEntities;
+  powerStones?: PowerStoneEntities;
 }
 
 /**

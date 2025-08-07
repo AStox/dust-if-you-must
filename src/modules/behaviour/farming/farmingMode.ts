@@ -18,8 +18,12 @@ import {
   harvestFarmPlots,
   growSeededFarmPlots,
   transferToFromChest,
-} from "../farmingOperations.js";
+} from "./farmingOperations.js";
 import { getOperationalConfig } from "../../../config/loader.js";
+import {
+  InventoryManager,
+  InventoryManagementConfig,
+} from "../shared/inventoryManager.js";
 
 // Farming-specific constants
 export const MAX_ENERGY: number = 817600000000000000;
@@ -64,6 +68,31 @@ export function getFarmingParameters() {
     targetSeeds: config.parameters.farming.targetSeeds,
     targetWheat: config.parameters.farming.targetWheat,
     lowEnergyThreshold: config.parameters.farming.lowEnergyThreshold,
+  };
+}
+
+/**
+ * Get farming inventory management configuration
+ */
+export function getFarmingInventoryConfig(): InventoryManagementConfig {
+  const params = getFarmingParameters();
+  const bucketId = getObjectIdByName("Bucket")!;
+  const waterBucketId = getObjectIdByName("WaterBucket")!;
+  const wheatSeedId = getObjectIdByName("WheatSeed")!;
+  const wheatId = getObjectIdByName("Wheat")!;
+  const slopId = getObjectIdByName("WheatSlop")!;
+
+  return {
+    allowedItems: [bucketId, waterBucketId, wheatSeedId, wheatId, slopId, 0], // 0 for empty slots
+    requiredItems: [
+      { type: bucketId, min: 1 }, // Need at least 1 bucket
+    ],
+    targetItems: [
+      { type: bucketId, target: params.targetBuckets },
+      { type: wheatSeedId, target: params.targetSeeds },
+      { type: wheatId, target: params.targetWheat },
+      { type: slopId, target: 0, max: 0 }, // Always store slop in chest
+    ],
   };
 }
 
@@ -139,7 +168,7 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 9999; // High priority when at coast with empty buckets
       },
-      execute: async (bot) => await fillBuckets(bot),
+      execute: async (bot, state) => await fillBuckets(bot),
     },
 
     {
@@ -152,9 +181,9 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 9996; // High priority when at farm with water and unwatered plots
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
         const farmPlots = await generateFarmPlots();
-        await waterFarmPlots(bot, farmPlots);
+        await waterFarmPlots(bot, farmPlots, state.waterBuckets);
       },
     },
 
@@ -168,9 +197,9 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 9997; // High priority when at farm with seeds and unseeded plots
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
         const farmPlots = await generateFarmPlots();
-        await seedFarmPlots(bot, farmPlots);
+        await seedFarmPlots(bot, farmPlots, state.wheatSeeds, state.inventory);
       },
     },
 
@@ -182,27 +211,7 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 9998; // High priority for growing
       },
-      execute: async (bot) => {
-        const areas = getFarmingAreas();
-        const farmCornerTopLeft = areas.farmCorner1;
-        const farmCornerBotRight = areas.farmCorner2;
-        const farmCornerBotLeft = {
-          x: farmCornerTopLeft.x,
-          y: farmCornerTopLeft.y,
-          z: farmCornerBotRight.z,
-        };
-        const farmCornerTopRight = {
-          x: farmCornerBotRight.x,
-          y: farmCornerTopLeft.y,
-          z: farmCornerTopLeft.z,
-        };
-
-        console.log("Committing farm chunks for growing...");
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopLeft));
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotRight));
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotLeft));
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopRight));
-
+      execute: async (bot, state) => {
         const farmPlots = await generateFarmPlots();
         await growSeededFarmPlots(bot, farmPlots);
       },
@@ -216,102 +225,113 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 9999; // Highest priority - harvest when ready
       },
-      execute: async (bot) => {
-        const areas = getFarmingAreas();
-        const farmCornerTopLeft = areas.farmCorner1;
-        const farmCornerBotRight = areas.farmCorner2;
-        const farmCornerBotLeft = {
-          x: farmCornerTopLeft.x,
-          y: farmCornerTopLeft.y,
-          z: farmCornerBotRight.z,
-        };
-        const farmCornerTopRight = {
-          x: farmCornerBotRight.x,
-          y: farmCornerTopLeft.y,
-          z: farmCornerTopLeft.z,
-        };
-
-        console.log("Committing farm chunks for harvesting...");
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopLeft));
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotRight));
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerBotLeft));
-        await bot.world.commitChunk(bot.world.toChunkCoord(farmCornerTopRight));
-
+      execute: async (bot, state) => {
         const farmPlots = await generateFarmPlots();
         await harvestFarmPlots(bot, farmPlots);
       },
     },
 
     {
-      name: "TRANSFER",
-      canExecute: (state) => state.location === "farm",
-      calculateScore: function (state) {
-        if (!this.canExecute(state)) return 0;
-        let score = 0;
-        const params = getFarmingParameters();
+      name: "MANAGE_INVENTORY",
+      canExecute: (state) => {
+        if (state.location !== "farm") return false;
 
-        // Calculate chest inventory counts for smarter scoring
+        const params = getFarmingParameters();
         const bucketId = getObjectIdByName("Bucket")!;
         const wheatSeedId = getObjectIdByName("WheatSeed")!;
         const wheatId = getObjectIdByName("Wheat")!;
+        const waterBucketId = getObjectIdByName("WaterBucket")!;
 
+        // Check for non-farming items that need to be stored
+        const allowedItems = new Set([
+          bucketId,
+          waterBucketId,
+          wheatSeedId,
+          wheatId,
+          0, // Empty slots
+        ]);
+
+        const hasNonFarmingItems = state.inventory.some(
+          (item) => !allowedItems.has(item.type) && item.amount > 0
+        );
+
+        // Check if we need items from chest
         const bucketsInChest = state.chestInventory
-          .filter((item) => item.type === bucketId)
+          .filter(
+            (item) => item.type === bucketId || item.type === waterBucketId
+          )
           .reduce((acc, item) => acc + item.amount, 0);
-
         const seedsInChest = state.chestInventory
           .filter((item) => item.type === wheatSeedId)
           .reduce((acc, item) => acc + item.amount, 0);
-
         const wheatInChest = state.chestInventory
           .filter((item) => item.type === wheatId)
           .reduce((acc, item) => acc + item.amount, 0);
 
-        // High priority for getting essential items (only if they're available in chest)
-        if (state.emptyBuckets < params.targetBuckets && bucketsInChest > 0) {
-          const bucketsNeeded = Math.min(
-            params.targetBuckets - state.emptyBuckets,
-            bucketsInChest
-          );
-          score += bucketsNeeded * 3; // Buckets are critical
-        }
+        console.log(
+          `    🔍 MANAGE_INVENTORY: emptyBuckets=${state.emptyBuckets}, waterBuckets=${state.waterBuckets}, bucketsInChest=${bucketsInChest}`
+        );
+        const needBuckets =
+          state.emptyBuckets + state.waterBuckets < params.targetBuckets &&
+          bucketsInChest > 0;
+        const needSeeds =
+          state.wheatSeeds < params.targetSeeds && seedsInChest > 0;
+        const needWheat =
+          state.wheat < params.targetWheat && wheatInChest >= 16;
+        const hasSlop = state.slop > 0;
 
-        if (state.wheatSeeds < params.targetSeeds && seedsInChest > 0) {
-          const seedsNeeded = Math.min(
-            params.targetSeeds - state.wheatSeeds,
-            seedsInChest
-          );
-          score += seedsNeeded * 1; // Seeds needed for planting
-        }
+        const shouldManage =
+          hasNonFarmingItems ||
+          needBuckets ||
+          needSeeds ||
+          needWheat ||
+          hasSlop;
 
-        if (state.wheat < params.targetWheat && wheatInChest > 0) {
-          const wheatNeeded = Math.min(
-            params.targetWheat - state.wheat,
-            wheatInChest
-          );
-          score += wheatNeeded * 0.5; // Wheat useful for slop
-        }
+        console.log(
+          `📦 MANAGE_INVENTORY: needBuckets=${needBuckets}, needSeeds=${needSeeds}, needWheat=${needWheat}, hasNonFarmingItems=${hasNonFarmingItems}, hasSlop=${hasSlop} → ${shouldManage}`
+        );
 
-        // Always transfer slop to chest (cleanup)
-        score += state.slop * 10;
+        return shouldManage;
+      },
+      calculateScore: function (state) {
+        if (!this.canExecute(state)) return 0;
+
+        // High priority for inventory management - farming needs proper setup
+        let score = 5000;
+
+        // Higher priority if we have slop (cleanup)
+        if (state.slop > 0) {
+          score += state.slop * 100;
+        }
 
         return score;
       },
-      execute: async (bot) => {
-        await transferToFromChest(bot);
+      execute: async (bot, state) => {
+        const config = getFarmingInventoryConfig();
+        await InventoryManager.manageInventory(bot, config);
       },
     },
 
     {
       name: "CRAFT_SLOP",
-      canExecute: (state) => state.wheat >= 16,
+      canExecute: (state) => state.wheat >= 16, // Need exactly 16 wheat for slop recipe
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         return 9999; // High priority when have enough wheat
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
+        if (state.wheat < 16) {
+          console.log(
+            `⚠️ Not enough wheat to craft slop (have ${state.wheat}, need 16)`
+          );
+          return;
+        }
+
         const wheatSlot = await bot.inventory.getSlotForItemType(
           getObjectIdByName("Wheat")!
+        );
+        console.log(
+          `🔨 Crafting slop with 16 wheat from slot ${wheatSlot[0]} (available: ${state.wheat})`
         );
         await bot.crafting.craft(bot.crafting.recipes["WheatSlop"].id, [
           [wheatSlot[0], 16],
@@ -343,7 +363,7 @@ export class FarmingMode extends BaseBehaviorMode {
         if (state.waterBuckets === 0 && state.unwateredPlots > 0) score += 20;
         return score;
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
         await walkToHouse(bot);
         await walkToCoast(bot);
       },
@@ -365,7 +385,7 @@ export class FarmingMode extends BaseBehaviorMode {
         score += state.waterBuckets * 2; // Higher priority with more water
         return score;
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
         await walkToHouse(bot);
         await walkToFarmCenter(bot);
       },
@@ -388,7 +408,7 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 10000; // Critical priority when low energy
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
         await bot.inventory.eat(
           (
             await bot.inventory.getSlotForItemType(
@@ -412,7 +432,7 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 500; // Medium-high priority - important to get to a known location
       },
-      execute: async (bot) => {
+      execute: async (bot, state) => {
         console.log(
           "🧭 Agent is in unknown location, using pathfinding to get to farm center..."
         );
@@ -434,22 +454,10 @@ export class FarmingMode extends BaseBehaviorMode {
         }
       },
     },
-
-    {
-      name: "WAIT",
-      canExecute: () => true,
-      calculateScore: function (state) {
-        return 1; // Lowest priority - fallback action
-      },
-      execute: async () => {
-        console.log("⏰ Farming mode waiting for 1 minute...");
-        await new Promise((resolve) => setTimeout(resolve, 60000));
-      },
-    },
   ];
 
   async isAvailable(bot: DustBot): Promise<boolean> {
-    // Farming is available if we have farming resources or farm work to do
+    // Farming is available if we can actually perform farming actions
     const inventory = await bot.inventory.getInventory(
       bot.player.characterEntityId
     );
@@ -466,32 +474,114 @@ export class FarmingMode extends BaseBehaviorMode {
       .filter((item) => item.type === getObjectIdByName("WheatSeed")!)
       .reduce((acc, item) => acc + item.amount, 0);
 
-    // Check if there's farm work to do
+    const wheat = inventory
+      .filter((item) => item.type === getObjectIdByName("Wheat")!)
+      .reduce((acc, item) => acc + item.amount, 0);
+
+    const slop = inventory
+      .filter((item) => item.type === getObjectIdByName("WheatSlop")!)
+      .reduce((acc, item) => acc + item.amount, 0);
+
+    // Check chest inventory for available resources
+    const entityIds = getEntityIds();
+    const chestInventory = await bot.inventory.getInventory(
+      entityIds.rightChestEntityId
+    );
+
+    const bucketsInChest = chestInventory
+      .filter((item) => item.type === getObjectIdByName("Bucket")!)
+      .reduce((acc, item) => acc + item.amount, 0);
+
+    const seedsInChest = chestInventory
+      .filter((item) => item.type === getObjectIdByName("WheatSeed")!)
+      .reduce((acc, item) => acc + item.amount, 0);
+
+    const wheatInChest = chestInventory
+      .filter((item) => item.type === getObjectIdByName("Wheat")!)
+      .reduce((acc, item) => acc + item.amount, 0);
+
+    // Check if there's farm work to do AND we have tools to do it
     const farmPlots = await generateFarmPlots();
-    let hasWork = false;
+    let hasDoableWork = false;
 
-    for (const plot of farmPlots) {
-      const type = await bot.world.getBlockType(plot);
-      const typeAbove = await bot.world.getBlockType({
-        x: plot.x,
-        y: plot.y + 1,
-        z: plot.z,
-      });
+    const plotAnalyses = await Promise.all(
+      farmPlots.map(async (plot) => {
+        const type = await bot.world.getBlockType(plot);
+        const typeAbove = await bot.world.getBlockType({
+          x: plot.x,
+          y: plot.y + 1,
+          z: plot.z,
+        });
 
-      // If there are unwatered plots, unseeded plots, or unharvested crops
-      if (
-        type === getObjectIdByName("Farmland")! ||
-        (type === getObjectIdByName("WetFarmland")! &&
-          typeAbove === getObjectIdByName("Air")!) ||
-        typeAbove === getObjectIdByName("Wheat")!
-      ) {
-        hasWork = true;
-        break;
-      }
-    }
+        // Unwatered plots - can do if we have buckets or can get them
+        if (type === getObjectIdByName("Farmland")!) {
+          const hasBuckets = emptyBuckets > 0 || waterBuckets > 0 || bucketsInChest > 0;
+          return hasBuckets;
+        }
 
-    // Available if we have tools (buckets, seeds) or there's work to do
-    return emptyBuckets > 0 || waterBuckets > 0 || wheatSeeds > 0 || hasWork;
+        // Unseeded plots - can do if we have seeds or can get them
+        if (
+          type === getObjectIdByName("WetFarmland")! &&
+          typeAbove === getObjectIdByName("Air")!
+        ) {
+          if (wheatSeeds > 0 || seedsInChest > 0) {
+            return true;
+          }
+        }
+
+        // Unharvested crops - can always do
+        if (typeAbove === getObjectIdByName("Wheat")!) {
+          return true;
+        }
+
+        // Growing plots - can always do if ready
+        if (typeAbove === getObjectIdByName("WheatSeed")!) {
+          const isReadyToGrow = await bot.farming.isPlantReadyToGrow({
+            x: plot.x,
+            y: plot.y + 1,
+            z: plot.z,
+          });
+          if (isReadyToGrow) {
+            return true;
+          }
+        }
+
+        return false;
+      })
+    );
+
+    hasDoableWork = plotAnalyses.some((result) => result);
+
+    // Available if we:
+    // 1. Have farming tools already
+    // 2. Have doable farm work
+    // 3. Can craft slop (have enough wheat)
+    // 4. Have slop and need energy
+    // 5. Have non-farming items to transfer
+    // 6. Need to get resources from chest and they're available
+    const params = getFarmingParameters();
+
+    const canGetResources =
+      (bot.state.unwateredPlots > 0 &&
+        emptyBuckets < params.targetBuckets &&
+        bucketsInChest > 0) ||
+      (bot.state.unseededPlots > 0 &&
+        wheatSeeds < params.targetSeeds &&
+        seedsInChest > 0) ||
+      (wheat < params.targetWheat && wheatInChest >= 16);
+
+    const hasTools = emptyBuckets > 0 || waterBuckets > 0 || wheatSeeds > 0;
+    const canCraftSlop = wheat >= 16;
+    const hasSlop = slop > 0;
+
+    const available =
+      hasTools || hasDoableWork || canCraftSlop || hasSlop || canGetResources;
+
+    console.log(
+      `🔍 FARMING isAvailable: hasTools=${hasTools}, hasDoableWork=${hasDoableWork}, canCraftSlop=${canCraftSlop}, hasSlop=${hasSlop}, canGetResources=${canGetResources} → ${available}`
+    );
+
+    return available;
   }
 
   async assessState(bot: DustBot): Promise<BotState> {
@@ -556,7 +646,7 @@ export class FarmingMode extends BaseBehaviorMode {
     );
 
     const bucketsInChest = chestInventory
-      .filter((item) => item.type === bucketId)
+      .filter((item) => item.type === bucketId || item.type === waterBucketId)
       .reduce((acc, item) => acc + item.amount, 0);
 
     const seedsInChest = chestInventory
@@ -581,33 +671,52 @@ export class FarmingMode extends BaseBehaviorMode {
     let ungrownPlots = 0;
     let unharvestedPlots = 0;
 
-    for (const plot of farmPlots) {
-      const type = await bot.world.getBlockType(plot);
-      const typeAbove = await bot.world.getBlockType({
-        x: plot.x,
-        y: plot.y + 1,
-        z: plot.z,
-      });
+    const plotAnalyses = await Promise.all(
+      farmPlots.map(async (plot) => {
+        const type = await bot.world.getBlockType(plot);
+        const typeAbove = await bot.world.getBlockType({
+          x: plot.x,
+          y: plot.y + 1,
+          z: plot.z,
+        });
 
-      if (type === getObjectIdByName("Farmland")!) {
-        unwateredPlots++;
-        if (typeAbove === getObjectIdByName("Wheat")!) {
-          unharvestedPlots++;
-        }
-      } else if (type === getObjectIdByName("WetFarmland")!) {
-        if (typeAbove === getObjectIdByName("Air")!) {
-          unseededPlots++;
-        } else if (typeAbove === getObjectIdByName("WheatSeed")!) {
-          const isReadyToGrow = await bot.farming.isPlantReadyToGrow({
-            x: plot.x,
-            y: plot.y + 1,
-            z: plot.z,
-          });
-          if (isReadyToGrow) {
-            ungrownPlots++;
+        const result = {
+          unwatered: false,
+          unseeded: false,
+          ungrown: false,
+          unharvested: false,
+        };
+
+        if (type === getObjectIdByName("Farmland")!) {
+          result.unwatered = true;
+          if (typeAbove === getObjectIdByName("Wheat")!) {
+            result.unharvested = true;
+          }
+        } else if (type === getObjectIdByName("WetFarmland")!) {
+          if (typeAbove === getObjectIdByName("Air")!) {
+            result.unseeded = true;
+          } else if (typeAbove === getObjectIdByName("WheatSeed")!) {
+            const isReadyToGrow = await bot.farming.isPlantReadyToGrow({
+              x: plot.x,
+              y: plot.y + 1,
+              z: plot.z,
+            });
+            if (isReadyToGrow) {
+              result.ungrown = true;
+            }
           }
         }
-      }
+
+        return result;
+      })
+    );
+
+    // Aggregate results
+    for (const analysis of plotAnalyses) {
+      if (analysis.unwatered) unwateredPlots++;
+      if (analysis.unseeded) unseededPlots++;
+      if (analysis.ungrown) ungrownPlots++;
+      if (analysis.unharvested) unharvestedPlots++;
     }
 
     console.log("\n🏡 Farm plot analysis:");

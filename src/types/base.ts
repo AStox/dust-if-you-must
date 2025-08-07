@@ -70,6 +70,6 @@ export interface BotState {
 export interface UtilityAction {
   name: string;
   calculateScore(state: BotState): number;
-  execute(bot: any): Promise<void>; // Using any to avoid circular import
+  execute(bot: any, state?: BotState): Promise<void>; // Using any to avoid circular import, state is optional for backward compatibility
   canExecute(state: BotState): boolean;
 }
