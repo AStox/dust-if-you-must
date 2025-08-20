@@ -208,7 +208,7 @@ export class EnergizeMode extends BaseBehaviorMode {
           (item) =>
             item.type === getObjectIdByName("OakSapling") && item.amount > 0
         );
-        const hasPlantable = (state as any).hasPlantable;
+        const hasPlantable = (state as any).hasPlantablePositions;
         console.log(
           `    🌱 PLANT_SAPLINGS:  hasOakSaplings=${hasOakSaplings}, hasPlantable=${hasPlantable}, chunk=${
             this.currentChunk + 1
@@ -329,7 +329,7 @@ export class EnergizeMode extends BaseBehaviorMode {
     if (this.totalChunks === 0) {
       this.calculateTotalChunks();
     }
-    
+
     const config = getOperationalConfig();
     //TODO: Why do we have 3 caches?
     this.pathfindingModule.clearCache();
@@ -437,7 +437,7 @@ export class EnergizeMode extends BaseBehaviorMode {
       const start = Date.now();
       hasPlantable = await hasPlantablePositionsInChunk(bot, chunkBounds);
       const end = Date.now();
-      console.log(`🔍 hasPlantablePositionsInChunk took ${end - start}ms`);
+      console.log(`🔍 hasPlantablePositionsInChunk took ${end - start}ms, result: ${hasPlantable}`);
     } catch (error) {
       console.log("⚠️ Error checking chunk plantable positions:", error);
     }

@@ -93,7 +93,7 @@ export class InventoryManager {
   }
 
   /**
-   * Manage inventory according to configuration
+   * Manage inventory according to configuration using optimized batch transfers
    */
   static async manageInventory(
     bot: DustBot,
@@ -119,12 +119,19 @@ export class InventoryManager {
     const chestEntityId = await this.getChestEntityId();
 
     // Get current inventories
-    let inventory = await bot.inventory.getInventory(
+    const inventory = await bot.inventory.getInventory(
       bot.player.characterEntityId
     );
-    let chestInventory = await bot.inventory.getInventory(chestEntityId);
+    const chestInventory = await bot.inventory.getInventory(chestEntityId);
 
-    // Debug chest inventory
+    // Debug both inventories
+    console.log("📦 Player inventory contents:");
+    inventory.forEach((item, index) => {
+      if (item.amount > 0) {
+        console.log(`  Slot ${index}: type=${item.type}, amount=${item.amount}`);
+      }
+    });
+
     console.log("📦 Chest inventory contents:");
     chestInventory.forEach((item, index) => {
       if (item.amount > 0) {
@@ -132,234 +139,244 @@ export class InventoryManager {
       }
     });
 
-    // Step 1: Store non-allowed items in chest
-    console.log("📦 Storing non-allowed items...");
-    const storeTransfers: [number, number, number][] = [];
-    let chestSlotIndex = 0;
+    // Create copies for virtual planning
+    const virtualPlayerInventory = [...inventory];
+    const virtualChestInventory = [...chestInventory];
 
-    for (let i = 0; i < inventory.length; i++) {
-      const item = inventory[i];
-      if (item.amount > 0 && !config.allowedItems.includes(item.type)) {
-        // Find available chest slot
-        while (
-          chestSlotIndex < 40 &&
-          chestInventory[chestSlotIndex] &&
-          chestInventory[chestSlotIndex].amount > 0
-        ) {
-          chestSlotIndex++;
-        }
+    // Collect all transfers in batches
+    const toChestTransfers: [number, number, number][] = [];
+    const fromChestTransfers: [number, number, number][] = [];
 
-        if (chestSlotIndex < 40) {
-          storeTransfers.push([i, chestSlotIndex, item.amount]);
-          console.log(
-            `  📤 Preparing to store ${item.amount}x type ${item.type}`
-          );
-          chestSlotIndex++;
-        }
-      }
-    }
+    // Step 1: Plan storage of non-allowed items
+    console.log("📦 Planning storage of non-allowed items...");
+    this.planStoreNonAllowedItems(
+      config.allowedItems,
+      virtualPlayerInventory,
+      virtualChestInventory,
+      toChestTransfers
+    );
 
-    if (storeTransfers.length > 0) {
-      try {
-        await bot.inventory.transfer(
-          bot.player.characterEntityId,
-          chestEntityId,
-          storeTransfers
-        );
-        console.log(`  ✅ Stored ${storeTransfers.length} item types in chest`);
-      } catch (error) {
-        console.log(`  ❌ Failed to store items: ${error}`);
-      }
-    }
-
-    // Refresh inventories after storing
-    inventory = await bot.inventory.getInventory(bot.player.characterEntityId);
-    chestInventory = await bot.inventory.getInventory(chestEntityId);
-
-    // Step 2: Get required items from chest
-    console.log("📦 Getting required items...");
+    // Step 2: Plan getting required items
+    console.log("📦 Planning required items transfers...");
     for (const req of config.requiredItems) {
-      const currentAmount = inventory
-        .filter((item) => item.type === req.type)
-        .reduce((acc, item) => acc + item.amount, 0);
-
-      const needed = (req.min || 0) - currentAmount;
-      if (needed > 0) {
-        const chestSlot = chestInventory.findIndex(
-          (item) => item.type === req.type && item.amount > 0
-        );
-
-        if (chestSlot !== -1) {
-          const toTake = Math.min(needed, chestInventory[chestSlot].amount);
-          try {
-            console.log(
-              `  🔄 Attempting to transfer ${toTake}x type ${req.type} from chest to player...`
-            );
-            await bot.inventory.transferExactAmount(
-              chestEntityId,
-              bot.player.characterEntityId,
-              req.type,
-              toTake
-            );
-            console.log(`  ✅ Got ${toTake}x type ${req.type} from chest`);
-
-            // Refresh inventories after transfer
-            inventory = await bot.inventory.getInventory(
-              bot.player.characterEntityId
-            );
-            chestInventory = await bot.inventory.getInventory(chestEntityId);
-          } catch (error) {
-            console.log(
-              `  ❌ Failed to get required item type ${req.type}: ${error}`
-            );
-          }
-        }
-      }
+      this.planGetRequiredItems(
+        req,
+        virtualPlayerInventory,
+        virtualChestInventory,
+        fromChestTransfers
+      );
     }
 
-    // Step 3: Adjust target amounts
-    console.log("📦 Adjusting target amounts...");
+    // Step 3: Plan target amount adjustments
+    console.log("📦 Planning target amount adjustments...");
     for (const req of config.targetItems) {
-      let currentAmount: number;
-      
-      // Special handling for buckets - count both empty and water buckets
-      if (req.type === 32788) { // Bucket type
-        const emptyBuckets = inventory
-          .filter((item) => item.type === 32788)
-          .reduce((acc, item) => acc + item.amount, 0);
-        const waterBuckets = inventory
-          .filter((item) => item.type === 32789)
-          .reduce((acc, item) => acc + item.amount, 0);
-        currentAmount = emptyBuckets + waterBuckets;
-      } else {
-        currentAmount = inventory
-          .filter((item) => item.type === req.type)
-          .reduce((acc, item) => acc + item.amount, 0);
-      }
-
-      const target = req.target || 0;
-      const needed = target - currentAmount;
-
-      console.log(
-        `  🔍 Target item type ${req.type}: current=${currentAmount}, target=${target}, needed=${needed}`
+      this.planTargetAdjustments(
+        req,
+        virtualPlayerInventory,
+        virtualChestInventory,
+        toChestTransfers,
+        fromChestTransfers
       );
+    }
 
-      if (needed > 0) {
-        // Need more - get from chest
-        let chestSlot: number;
-        
-        // Special handling for buckets - prefer water buckets, then empty buckets
-        if (req.type === 32788) { // Bucket type
-          chestSlot = chestInventory.findIndex(
-            (item) => item.type === 32789 && item.amount > 0 // Water buckets first
-          );
-          if (chestSlot === -1) {
-            chestSlot = chestInventory.findIndex(
-              (item) => item.type === 32788 && item.amount > 0 // Empty buckets as fallback
-            );
-          }
-        } else {
-          chestSlot = chestInventory.findIndex(
-            (item) => item.type === req.type && item.amount > 0
-          );
-        }
+    // Execute all transfers in batches
+    if (toChestTransfers.length > 0) {
+      console.log("📦 Executing batch transfer TO chest...");
+      console.log(`  📦 Transferring ${toChestTransfers.length} item stacks in one transaction`);
+      await bot.inventory.transfer(bot.player.characterEntityId, chestEntityId, toChestTransfers);
+      console.log("  ✅ Batch transfer to chest completed!");
+    }
 
-        if (chestSlot !== -1) {
-          const actualItemType = chestInventory[chestSlot].type;
-          
-          // For buckets, collect all available buckets of the same type
-          let totalAvailable = 0;
-          const bucketSlots: number[] = [];
-          
-          if (req.type === 32788) { // Special bucket handling
-            // Collect all water buckets or empty buckets
-            for (let i = 0; i < chestInventory.length; i++) {
-              if (chestInventory[i].type === actualItemType && chestInventory[i].amount > 0) {
-                bucketSlots.push(i);
-                totalAvailable += chestInventory[i].amount;
-              }
-            }
-          } else {
-            // Regular item handling
-            totalAvailable = chestInventory[chestSlot].amount;
-            bucketSlots.push(chestSlot);
-          }
-          
-          const toTake = Math.min(needed, totalAvailable);
-          console.log(
-            `  🔄 Found ${totalAvailable}x type ${actualItemType} in chest, taking ${toTake}`
-          );
-          
-          try {
-            await bot.inventory.transferExactAmount(
-              chestEntityId,
-              bot.player.characterEntityId,
-              actualItemType,
-              toTake
-            );
-            console.log(
-              `  ✅ Got ${toTake}x type ${actualItemType} from chest (target adjustment)`
-            );
+    if (fromChestTransfers.length > 0) {
+      console.log("📦 Executing batch transfer FROM chest...");
+      console.log(`  📦 Transferring ${fromChestTransfers.length} item stacks in one transaction`);
+      await bot.inventory.transfer(chestEntityId, bot.player.characterEntityId, fromChestTransfers);
+      console.log("  ✅ Batch transfer from chest completed!");
+    }
 
-            // Refresh inventories
-            inventory = await bot.inventory.getInventory(
-              bot.player.characterEntityId
-            );
-            chestInventory = await bot.inventory.getInventory(chestEntityId);
-          } catch (error) {
-            console.log(
-              `  ❌ Failed to get target item type ${req.type}: ${error}`
-            );
-          }
-        } else {
-          if (req.type === 32788) {
-            console.log(
-              `  ⚠️ No buckets (empty or water) found in chest`
-            );
-          } else {
-            console.log(
-              `  ⚠️ Type ${req.type} not found in chest or no available amount`
-            );
-          }
-        }
-      } else if (
-        needed < 0 &&
-        req.max !== undefined &&
-        currentAmount > req.max
-      ) {
-        // Have too many - store excess in chest
-        const excess = currentAmount - target;
-        const playerSlot = inventory.findIndex(
-          (item) => item.type === req.type && item.amount > 0
-        );
-
-        if (playerSlot !== -1) {
-          const toStore = Math.min(excess, inventory[playerSlot].amount);
-          try {
-            await bot.inventory.transferExactAmount(
-              bot.player.characterEntityId,
-              chestEntityId,
-              req.type,
-              toStore
-            );
-            console.log(
-              `  ✅ Stored ${toStore}x type ${req.type} in chest (excess removal)`
-            );
-
-            // Refresh inventories
-            inventory = await bot.inventory.getInventory(
-              bot.player.characterEntityId
-            );
-            chestInventory = await bot.inventory.getInventory(chestEntityId);
-          } catch (error) {
-            console.log(
-              `  ❌ Failed to store excess item type ${req.type}: ${error}`
-            );
-          }
-        }
-      }
+    if (toChestTransfers.length === 0 && fromChestTransfers.length === 0) {
+      console.log("📦 No transfers needed - inventory already optimal!");
     }
 
     console.log("✅ Inventory management completed!");
+  }
+
+  /**
+   * Plan transfers to store non-allowed items in chest
+   */
+  private static planStoreNonAllowedItems(
+    allowedItems: number[],
+    playerInventory: any[],
+    chestInventory: any[],
+    transfers: [number, number, number][]
+  ): void {
+    for (let playerSlot = 0; playerSlot < playerInventory.length; playerSlot++) {
+      const item = playerInventory[playerSlot];
+      if (item.amount > 0 && !allowedItems.includes(item.type)) {
+        const emptyChestSlot = chestInventory.findIndex(slot => slot.amount === 0);
+        if (emptyChestSlot !== -1) {
+          transfers.push([playerSlot, emptyChestSlot, item.amount]);
+          console.log(`  📦 Planned: Store ${item.amount}x type ${item.type} from player slot ${playerSlot} to chest slot ${emptyChestSlot}`);
+          
+          // Update virtual inventories
+          chestInventory[emptyChestSlot] = { type: item.type, amount: item.amount };
+          playerInventory[playerSlot] = { type: 0, amount: 0 };
+        }
+      }
+    }
+  }
+
+  /**
+   * Plan transfers to get required items from chest
+   */
+  private static planGetRequiredItems(
+    req: InventoryRequirement,
+    playerInventory: any[],
+    chestInventory: any[],
+    transfers: [number, number, number][]
+  ): void {
+    const currentAmount = playerInventory
+      .filter((item) => item.type === req.type)
+      .reduce((acc, item) => acc + item.amount, 0);
+
+    const needed = (req.min || 0) - currentAmount;
+    if (needed > 0) {
+      console.log(`  🔄 Need ${needed} more of type ${req.type} (current: ${currentAmount}, min: ${req.min})`);
+      this.planItemTransfersFromChest(req.type, needed, chestInventory, playerInventory, transfers);
+    }
+  }
+
+  /**
+   * Plan transfers for target amount adjustments
+   */
+  private static planTargetAdjustments(
+    req: InventoryRequirement,
+    playerInventory: any[],
+    chestInventory: any[],
+    toChestTransfers: [number, number, number][],
+    fromChestTransfers: [number, number, number][]
+  ): void {
+    let currentAmount: number;
+    
+    // Special handling for buckets - count both empty and water buckets
+    if (req.type === 32788) {
+      const emptyBuckets = playerInventory
+        .filter((item) => item.type === 32788)
+        .reduce((acc, item) => acc + item.amount, 0);
+      const waterBuckets = playerInventory
+        .filter((item) => item.type === 32789)
+        .reduce((acc, item) => acc + item.amount, 0);
+      currentAmount = emptyBuckets + waterBuckets;
+    } else {
+      currentAmount = playerInventory
+        .filter((item) => item.type === req.type)
+        .reduce((acc, item) => acc + item.amount, 0);
+    }
+
+    const target = req.target || 0;
+    const needed = target - currentAmount;
+
+    console.log(`  🔍 Target item type ${req.type}: current=${currentAmount}, target=${target}, needed=${needed}`);
+
+    if (needed > 0) {
+      // Need more - plan transfers from chest
+      this.planItemTransfersFromChest(req.type, needed, chestInventory, playerInventory, fromChestTransfers);
+    } else if (needed < 0 && req.max !== undefined && currentAmount > req.max) {
+      // Have too many - plan transfers to chest
+      const excess = currentAmount - target;
+      console.log(`  🔄 Planning to store ${excess}x type ${req.type}`);
+      
+      let remaining = excess;
+      for (let playerSlot = 0; playerSlot < playerInventory.length && remaining > 0; playerSlot++) {
+        const item = playerInventory[playerSlot];
+        if (item.type === req.type && item.amount > 0) {
+          const toTransfer = Math.min(remaining, item.amount);
+          const emptyChestSlot = chestInventory.findIndex(slot => slot.amount === 0);
+          if (emptyChestSlot !== -1) {
+            toChestTransfers.push([playerSlot, emptyChestSlot, toTransfer]);
+            console.log(`  📦 Planned: Store ${toTransfer}x type ${req.type} from player slot ${playerSlot} to chest slot ${emptyChestSlot}`);
+            
+            // Update virtual states
+            chestInventory[emptyChestSlot] = { type: req.type, amount: toTransfer };
+            playerInventory[playerSlot].amount -= toTransfer;
+            remaining -= toTransfer;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Helper method to plan transfers from chest to player inventory
+   */
+  private static planItemTransfersFromChest(
+    itemType: number,
+    needed: number,
+    chestInventory: any[],
+    playerInventory: any[],
+    transfers: [number, number, number][]
+  ): void {
+    let remaining = needed;
+    
+    // Special handling for buckets - look for water buckets first, then empty buckets
+    const targetTypes = itemType === 32788 ? [32789, 32788] : [itemType];
+    
+    for (const targetType of targetTypes) {
+      for (let chestSlot = 0; chestSlot < chestInventory.length && remaining > 0; chestSlot++) {
+        const chestItem = chestInventory[chestSlot];
+        if (chestItem.type === targetType && chestItem.amount > 0) {
+          const toTake = Math.min(remaining, chestItem.amount);
+          
+          // Find empty player slot (buckets have max stack size of 1)
+          const playerSlot = playerInventory.findIndex(item => item.amount === 0);
+          
+          if (playerSlot !== -1) {
+            // For buckets (max stack 1), transfer them one by one
+            if (targetType === 32788 || targetType === 32789) {
+              for (let i = 0; i < toTake && remaining > 0; i++) {
+                const nextPlayerSlot = playerInventory.findIndex((item, idx) => idx >= playerSlot && item.amount === 0);
+                if (nextPlayerSlot !== -1) {
+                  transfers.push([chestSlot, nextPlayerSlot, 1]);
+                  console.log(`  📦 Planned: Take 1x type ${targetType} (bucket) from chest slot ${chestSlot} to player slot ${nextPlayerSlot}`);
+                  
+                  // Update virtual states
+                  chestInventory[chestSlot].amount -= 1;
+                  playerInventory[nextPlayerSlot] = { type: targetType, amount: 1 };
+                  remaining -= 1;
+                }
+              }
+            } else {
+              // Regular items can stack
+              transfers.push([chestSlot, playerSlot, toTake]);
+              console.log(`  📦 Planned: Take ${toTake}x type ${targetType} from chest slot ${chestSlot} to player slot ${playerSlot}`);
+              
+              // Update virtual states
+              chestInventory[chestSlot].amount -= toTake;
+              playerInventory[playerSlot] = { type: targetType, amount: toTake };
+              remaining -= toTake;
+            }
+          }
+        }
+      }
+      
+      if (remaining === 0) break;
+    }
+    
+    if (remaining > 0) {
+      console.log(`  ⚠️ Could not plan transfer for ${remaining}x type ${itemType} - not enough in chest or no space`);
+      console.log(`    🔍 Searched for types: ${targetTypes.join(', ')}`);
+      console.log(`    📦 Available in chest:`);
+      targetTypes.forEach(type => {
+        const available = chestInventory.filter(item => item.type === type && item.amount > 0);
+        if (available.length > 0) {
+          available.forEach((item, idx) => {
+            const slotIndex = chestInventory.findIndex(slot => slot === item);
+            console.log(`      Slot ${slotIndex}: ${item.amount}x type ${type}`);
+          });
+        } else {
+          console.log(`      No type ${type} found in chest`);
+        }
+      });
+    }
   }
 }

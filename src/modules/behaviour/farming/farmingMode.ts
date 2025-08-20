@@ -153,15 +153,15 @@ export class FarmingMode extends BaseBehaviorMode {
   readonly name = "FARMING";
   protected priority = 100; // High priority - farming is primary mode
 
+  // Cache for action execution results to avoid duplicate calls
+  private actionExecutionCache: Map<string, boolean> = new Map();
+
   protected actions: UtilityAction[] = [
     {
       name: "FILL_BUCKETS",
       canExecute: (state) => {
         const atCoast = state.location === "coast";
         const hasEmptyBuckets = state.emptyBuckets > 0;
-        console.log(
-          `    🪣 FILL_BUCKETS: location=${state.location} (coast=${atCoast}), emptyBuckets=${state.emptyBuckets} (>0=${hasEmptyBuckets})`
-        );
         return atCoast && hasEmptyBuckets;
       },
       calculateScore: function (state) {
@@ -268,9 +268,6 @@ export class FarmingMode extends BaseBehaviorMode {
           .filter((item) => item.type === wheatId)
           .reduce((acc, item) => acc + item.amount, 0);
 
-        console.log(
-          `    🔍 MANAGE_INVENTORY: emptyBuckets=${state.emptyBuckets}, waterBuckets=${state.waterBuckets}, bucketsInChest=${bucketsInChest}`
-        );
         const needBuckets =
           state.emptyBuckets + state.waterBuckets < params.targetBuckets &&
           bucketsInChest > 0;
@@ -286,10 +283,6 @@ export class FarmingMode extends BaseBehaviorMode {
           needSeeds ||
           needWheat ||
           hasSlop;
-
-        console.log(
-          `📦 MANAGE_INVENTORY: needBuckets=${needBuckets}, needSeeds=${needSeeds}, needWheat=${needWheat}, hasNonFarmingItems=${hasNonFarmingItems}, hasSlop=${hasSlop} → ${shouldManage}`
-        );
 
         return shouldManage;
       },
@@ -330,9 +323,6 @@ export class FarmingMode extends BaseBehaviorMode {
         const wheatSlot = await bot.inventory.getSlotForItemType(
           getObjectIdByName("Wheat")!
         );
-        console.log(
-          `🔨 Crafting slop with 16 wheat from slot ${wheatSlot[0]} (available: ${state.wheat})`
-        );
         await bot.crafting.craft(bot.crafting.recipes["WheatSlop"].id, [
           [wheatSlot[0], 16],
         ]);
@@ -344,9 +334,6 @@ export class FarmingMode extends BaseBehaviorMode {
       canExecute: (state) => {
         const notAtCoast = state.location !== "coast";
         const hasEmptyBuckets = state.emptyBuckets > 0;
-        console.log(
-          `    🚶 MOVE_TO_COAST: location=${state.location} (not coast=${notAtCoast}), emptyBuckets=${state.emptyBuckets} (>0=${hasEmptyBuckets})`
-        );
         return notAtCoast && hasEmptyBuckets;
       },
       calculateScore: function (state) {
@@ -390,42 +377,10 @@ export class FarmingMode extends BaseBehaviorMode {
         await walkToFarmCenter(bot);
       },
     },
-
-    {
-      name: "EAT",
-      canExecute: (state) => {
-        const params = getFarmingParameters();
-        const hasSlop = state.slop > 0;
-        const lowEnergy = state.energy / MAX_ENERGY < params.lowEnergyThreshold;
-        const energyPercent = ((state.energy / MAX_ENERGY) * 100).toFixed(1);
-        const thresholdPercent = (params.lowEnergyThreshold * 100).toFixed(0);
-        console.log(
-          `    🍽️ EAT: slop=${state.slop} (>0=${hasSlop}), energy=${energyPercent}% (<${thresholdPercent}%=${lowEnergy})`
-        );
-        return hasSlop && lowEnergy;
-      },
-      calculateScore: function (state) {
-        if (!this.canExecute(state)) return 0;
-        return 10000; // Critical priority when low energy
-      },
-      execute: async (bot, state) => {
-        await bot.inventory.eat(
-          (
-            await bot.inventory.getSlotForItemType(
-              getObjectIdByName("WheatSlop")!
-            )
-          )[0]
-        );
-      },
-    },
-
     {
       name: "GET_TO_KNOWN_LOCATION",
       canExecute: (state) => {
         const isUnknownLocation = state.location === "unknown";
-        console.log(
-          `    🧭 GET_TO_KNOWN_LOCATION: location=${state.location} (unknown=${isUnknownLocation})`
-        );
         return isUnknownLocation;
       },
       calculateScore: function (state) {
@@ -433,9 +388,6 @@ export class FarmingMode extends BaseBehaviorMode {
         return 500; // Medium-high priority - important to get to a known location
       },
       execute: async (bot, state) => {
-        console.log(
-          "🧭 Agent is in unknown location, using pathfinding to get to farm center..."
-        );
         const areas = getFarmingAreas();
         console.log(
           `🎯 Navigating to farm center: (${areas.farmCenter.x}, ${areas.farmCenter.z})`
@@ -457,131 +409,67 @@ export class FarmingMode extends BaseBehaviorMode {
   ];
 
   async isAvailable(bot: DustBot): Promise<boolean> {
-    // Farming is available if we can actually perform farming actions
-    const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
-    );
-
-    const emptyBuckets = inventory.filter(
-      (item) => item.type === getObjectIdByName("Bucket")!
-    ).length;
-
-    const waterBuckets = inventory.filter(
-      (item) => item.type === getObjectIdByName("WaterBucket")!
-    ).length;
-
-    const wheatSeeds = inventory
-      .filter((item) => item.type === getObjectIdByName("WheatSeed")!)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const wheat = inventory
-      .filter((item) => item.type === getObjectIdByName("Wheat")!)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const slop = inventory
-      .filter((item) => item.type === getObjectIdByName("WheatSlop")!)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    // Check chest inventory for available resources
-    const entityIds = getEntityIds();
-    const chestInventory = await bot.inventory.getInventory(
-      entityIds.rightChestEntityId
-    );
-
-    const bucketsInChest = chestInventory
-      .filter((item) => item.type === getObjectIdByName("Bucket")!)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const seedsInChest = chestInventory
-      .filter((item) => item.type === getObjectIdByName("WheatSeed")!)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const wheatInChest = chestInventory
-      .filter((item) => item.type === getObjectIdByName("Wheat")!)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    // Check if there's farm work to do AND we have tools to do it
-    const farmPlots = await generateFarmPlots();
-    let hasDoableWork = false;
-
-    const plotAnalyses = await Promise.all(
-      farmPlots.map(async (plot) => {
-        const type = await bot.world.getBlockType(plot);
-        const typeAbove = await bot.world.getBlockType({
-          x: plot.x,
-          y: plot.y + 1,
-          z: plot.z,
-        });
-
-        // Unwatered plots - can do if we have buckets or can get them
-        if (type === getObjectIdByName("Farmland")!) {
-          const hasBuckets = emptyBuckets > 0 || waterBuckets > 0 || bucketsInChest > 0;
-          return hasBuckets;
-        }
-
-        // Unseeded plots - can do if we have seeds or can get them
-        if (
-          type === getObjectIdByName("WetFarmland")! &&
-          typeAbove === getObjectIdByName("Air")!
-        ) {
-          if (wheatSeeds > 0 || seedsInChest > 0) {
-            return true;
-          }
-        }
-
-        // Unharvested crops - can always do
-        if (typeAbove === getObjectIdByName("Wheat")!) {
-          return true;
-        }
-
-        // Growing plots - can always do if ready
-        if (typeAbove === getObjectIdByName("WheatSeed")!) {
-          const isReadyToGrow = await bot.farming.isPlantReadyToGrow({
-            x: plot.x,
-            y: plot.y + 1,
-            z: plot.z,
-          });
-          if (isReadyToGrow) {
-            return true;
-          }
-        }
-
-        return false;
-      })
-    );
-
-    hasDoableWork = plotAnalyses.some((result) => result);
-
-    // Available if we:
-    // 1. Have farming tools already
-    // 2. Have doable farm work
-    // 3. Can craft slop (have enough wheat)
-    // 4. Have slop and need energy
-    // 5. Have non-farming items to transfer
-    // 6. Need to get resources from chest and they're available
-    const params = getFarmingParameters();
-
-    const canGetResources =
-      (bot.state.unwateredPlots > 0 &&
-        emptyBuckets < params.targetBuckets &&
-        bucketsInChest > 0) ||
-      (bot.state.unseededPlots > 0 &&
-        wheatSeeds < params.targetSeeds &&
-        seedsInChest > 0) ||
-      (wheat < params.targetWheat && wheatInChest >= 16);
-
-    const hasTools = emptyBuckets > 0 || waterBuckets > 0 || wheatSeeds > 0;
-    const canCraftSlop = wheat >= 16;
-    const hasSlop = slop > 0;
-
-    const available =
-      hasTools || hasDoableWork || canCraftSlop || hasSlop || canGetResources;
-
+    // Clear cache for fresh evaluation
+    this.actionExecutionCache.clear();
+    
+    // Get current state
+    const state = await this.assessState(bot);
+    
+    // Check if any action can execute and cache the results
+    const executableActions = [];
+    for (const action of this.actions) {
+      const canExecute = action.canExecute(state);
+      this.actionExecutionCache.set(action.name, canExecute);
+      if (canExecute) {
+        executableActions.push(action.name);
+      }
+    }
+    
+    const available = executableActions.length > 0;
+    
     console.log(
-      `🔍 FARMING isAvailable: hasTools=${hasTools}, hasDoableWork=${hasDoableWork}, canCraftSlop=${canCraftSlop}, hasSlop=${hasSlop}, canGetResources=${canGetResources} → ${available}`
+      `🔍 FARMING isAvailable: executableActions=[${executableActions.join(', ')}] → ${available}`
     );
 
     return available;
+  }
+
+  // Override selectAction to use cached results
+  async selectAction(state: BotState): Promise<UtilityAction> {
+    // If cache is empty, rebuild it
+    if (this.actionExecutionCache.size === 0) {
+      for (const action of this.actions) {
+        const canExecute = action.canExecute(state);
+        this.actionExecutionCache.set(action.name, canExecute);
+      }
+    }
+
+    // Filter to only executable actions using cache
+    const executableActions = this.actions.filter(action => 
+      this.actionExecutionCache.get(action.name) === true
+    );
+
+    if (executableActions.length === 0) {
+      console.log("⚠️ No executable actions found in FARMING mode");
+      // Fall back to base class behavior which will throw an error
+      return super.selectAction(state);
+    }
+
+    // Calculate scores for executable actions
+    const scoredActions = executableActions.map(action => ({
+      action,
+      score: action.calculateScore(state)
+    }));
+
+    // Sort by score descending
+    scoredActions.sort((a, b) => b.score - a.score);
+
+    console.log("\n🎯 FARMING Action Selection:");
+    for (const { action, score } of scoredActions.slice(0, 3)) {
+      console.log(`  ${action.name}: ${score}`);
+    }
+
+    return scoredActions[0].action;
   }
 
   async assessState(bot: DustBot): Promise<BotState> {

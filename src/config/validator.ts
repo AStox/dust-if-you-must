@@ -107,8 +107,6 @@ export class ConfigValidator {
       errors.push(
         '❌ Farming areas are required. Add a "farming" section under "areas" with farm coordinates'
       );
-    } else {
-      this.validateFarmingAreas(areas.farming, errors, warnings);
     }
 
     // Validate energize areas (optional unless required)
@@ -117,112 +115,7 @@ export class ConfigValidator {
         errors.push(
           '❌ Energize areas are required for this configuration. Add an "energize" section under "areas"'
         );
-      } else {
-        this.validateEnergizeAreas(areas.energize, errors, warnings);
       }
-    } else if (areas.energize) {
-      this.validateEnergizeAreas(areas.energize, errors, warnings);
-    }
-  }
-
-  /**
-   * Validate farming area coordinates
-   */
-  private static validateFarmingAreas(
-    farming: any,
-    errors: string[],
-    warnings: string[]
-  ): void {
-    // Farm center
-    if (!this.isValidPosition(farming.farmCenter)) {
-      errors.push(
-        '❌ Farm center coordinates are invalid. Example: "farmCenter": {"x": -401, "y": 72, "z": 483}'
-      );
-    }
-
-    // Farm bounds
-    if (!farming.farmBounds) {
-      errors.push(
-        '❌ Farm bounds are required. Add: "farmBounds": {"corner1": {"x": -405, "y": 72, "z": 479}, "corner2": {"x": -398, "y": 72, "z": 486}}'
-      );
-    } else {
-      if (!this.isValidPosition(farming.farmBounds.corner1)) {
-        errors.push(
-          "❌ Farm bounds corner1 coordinates are invalid. Must have valid x, y, z coordinates"
-        );
-      }
-      if (!this.isValidPosition(farming.farmBounds.corner2)) {
-        errors.push(
-          "❌ Farm bounds corner2 coordinates are invalid. Must have valid x, y, z coordinates"
-        );
-      }
-
-      // Validate farm area makes sense
-      if (
-        this.isValidPosition(farming.farmBounds.corner1) &&
-        this.isValidPosition(farming.farmBounds.corner2)
-      ) {
-        this.validateFarmBounds(farming.farmBounds, warnings);
-      }
-    }
-
-    // Water source
-    if (!this.isValidPosition(farming.waterSource)) {
-      errors.push(
-        '❌ Water source coordinates are invalid. Example: "waterSource": {"x": -444, "y": 62, "z": 489}'
-      );
-    }
-
-    // Coast position
-    if (!this.isValidPosition(farming.coastPosition)) {
-      errors.push(
-        '❌ Coast position coordinates are invalid. Example: "coastPosition": {"x": -443, "y": 63, "z": 489}'
-      );
-    }
-
-    // House position
-    if (!this.isValidPosition(farming.housePosition)) {
-      errors.push(
-        '❌ House position coordinates are invalid. Example: "housePosition": {"x": -401, "y": 72, "z": 489}'
-      );
-    }
-
-    // Cross-validate farming area relationships
-    if (
-      this.isValidPosition(farming.farmCenter) &&
-      this.isValidPosition(farming.waterSource) &&
-      this.isValidPosition(farming.coastPosition) &&
-      this.isValidPosition(farming.housePosition)
-    ) {
-      this.validateFarmingAreaProximity(farming, warnings);
-    }
-  }
-
-  /**
-   * Validate energize area coordinates
-   */
-  private static validateEnergizeAreas(
-    energize: any,
-    errors: string[],
-    warnings: string[]
-  ): void {
-    if (!energize.treeFarmBounds) {
-      errors.push(
-        '❌ Tree farm bounds are required. Add: "treeFarmBounds": {"corner1": {...}, "corner2": {...}}'
-      );
-    } else {
-      if (!this.isValidPosition(energize.treeFarmBounds.corner1)) {
-        errors.push("❌ Tree farm bounds corner1 coordinates are invalid");
-      }
-      if (!this.isValidPosition(energize.treeFarmBounds.corner2)) {
-        errors.push("❌ Tree farm bounds corner2 coordinates are invalid");
-      }
-    }
-
-    if (!this.isValidPosition(energize.powerStoneLocation)) {
-      errors.push(
-        '❌ Power stone location coordinates are invalid. Example: "powerStoneLocation": {"x": -320, "y": 75, "z": 420}'
-      );
     }
   }
 
@@ -435,71 +328,6 @@ export class ConfigValidator {
           )} blocks apart. Consider placing them closer for efficiency`
         );
       }
-    }
-  }
-
-  /**
-   * Validate farm bounds make sense
-   */
-  private static validateFarmBounds(
-    bounds: AreaBounds,
-    warnings: string[]
-  ): void {
-    const corner1 = bounds.corner1;
-    const corner2 = bounds.corner2;
-
-    // Check if farm area is reasonable size
-    const width = Math.abs(corner2.x - corner1.x) + 1;
-    const length = Math.abs(corner2.z - corner1.z) + 1;
-    const area = width * length;
-
-    if (area < 4) {
-      warnings.push(
-        `⚠️ Farm area is very small (${width}x${length} = ${area} plots). Consider expanding for better efficiency`
-      );
-    } else if (area > 200) {
-      warnings.push(
-        `⚠️ Farm area is very large (${width}x${length} = ${area} plots). This may cause performance issues`
-      );
-    }
-
-    // Check if Y coordinates match
-    if (corner1.y !== corner2.y) {
-      warnings.push(
-        `⚠️ Farm corners have different Y coordinates (${corner1.y} vs ${corner2.y}). Farm should be on a flat surface`
-      );
-    }
-  }
-
-  /**
-   * Validate proximity of farming areas
-   */
-  private static validateFarmingAreaProximity(
-    farming: any,
-    warnings: string[]
-  ): void {
-    const farmCenter = farming.farmCenter;
-    const housePos = farming.housePosition;
-    const coastPos = farming.coastPosition;
-
-    // Check distance from farm to house
-    const farmToHouse = this.calculateDistance(farmCenter, housePos);
-    if (farmToHouse > 50) {
-      warnings.push(
-        `⚠️ Farm is ${farmToHouse.toFixed(
-          1
-        )} blocks from house. Consider closer placement for efficiency`
-      );
-    }
-
-    // Check distance from house to coast
-    const houseToCoast = this.calculateDistance(housePos, coastPos);
-    if (houseToCoast > 30) {
-      warnings.push(
-        `⚠️ House is ${houseToCoast.toFixed(
-          1
-        )} blocks from coast. Consider closer placement for water collection`
-      );
     }
   }
 

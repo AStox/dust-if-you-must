@@ -9,6 +9,16 @@ import { InventoryModule } from "./modules/inventory.js";
 import { BotState, Vec3 } from "./types";
 import { PlayerState } from "./core/base.js";
 
+// ASCII Art Banner - RuneScape Rainbow Style
+console.log(`
+\x1b[91m███████╗████████╗ ██████╗ ██╗  ██╗██████╗  ██████╗ ████████╗\x1b[0m
+\x1b[93m██╔════╝╚══██╔══╝██╔═══██╗╚██╗██╔╝██╔══██╗██╔═══██╗╚══██╔══╝\x1b[0m
+\x1b[92m███████╗   ██║   ██║   ██║ ╚███╔╝ ██████╔╝██║   ██║   ██║   \x1b[0m
+\x1b[96m╚════██║   ██║   ██║   ██║ ██╔██╗ ██╔══██╗██║   ██║   ██║   \x1b[0m
+\x1b[94m███████║   ██║   ╚██████╔╝██╔╝ ██╗██████╔╝╚██████╔╝   ██║   \x1b[0m
+\x1b[95m╚══════╝   ╚═╝    ╚═════╝ ╚═╝  ╚═╝╚═════╝  ╚═════╝    ╚═╝   \x1b[0m
+`);
+
 // Load environment variables
 dotenv.config();
 
@@ -22,8 +32,6 @@ export class DustBot {
   public inventory: InventoryModule;
   public state: BotState;
   constructor() {
-    console.log("🤖 Initializing Dust Bot...");
-
     // Initialize all modules
     this.movement = new MovementModule();
     this.farming = new FarmingModule();
@@ -49,7 +57,6 @@ export class DustBot {
       inventory: [],
       chestInventory: [],
     };
-    console.log("✅ All modules initialized!");
   }
 
   // Get wallet and character info
@@ -57,8 +64,11 @@ export class DustBot {
     const info = await this.movement.getWalletInfo();
     console.log("🤖 Dust Bot Info:");
     console.log(`💰 Wallet: ${info.address}`);
-    console.log(`💰 Balance: ${info.balance} ETH`);
-    console.log(`👤 Character: ${info.entityId}`);
+    console.log(
+      `💰 Balance: ${info.balance} ETH ${
+        parseFloat(info.balance) < 0.001 ? "🚨" : "💰"
+      }`
+    );
     return info;
   }
 

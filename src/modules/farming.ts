@@ -69,7 +69,6 @@ export class FarmingModule extends DustGameBase {
     );
   }
 
-  // Plant seeds (if this function exists in the game - may need different system)
   async plant(coord: Vec3, seedSlot: number = 0): Promise<void> {
     if (!isValidCoordinate(coord)) {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);

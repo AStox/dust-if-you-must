@@ -442,9 +442,7 @@ export class WorldModule extends DustGameBase {
   }
 
   async commitChunk(coord: Vec3): Promise<void> {
-    console.log("committing chunk", coord);
     const chunkCoord = packVec3(coord);
-    console.log("chunkCoord", chunkCoord);
     await this.executeSystemCall(
       this.SYSTEM_IDS.NATURE_SYSTEM,
       "chunkCommit(bytes32,uint96)",

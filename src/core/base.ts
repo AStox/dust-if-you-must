@@ -102,7 +102,7 @@ export abstract class DustGameBase {
 
     DustGameBase.currentNonce = await this.wallet.getNonce();
     DustGameBase.nonceInitialized = true;
-    console.log(`🔄 Initialized nonce counter: ${DustGameBase.currentNonce}`);
+    // console.log(`🔄 Initialized nonce counter: ${DustGameBase.currentNonce}`);
   }
 
   /**

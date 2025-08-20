@@ -82,7 +82,7 @@ export class SurvivalMode extends BaseBehaviorMode {
   }
 
   async assessState(bot: DustBot): Promise<BotState> {
-    console.log("\n🚨 === SURVIVAL STATE ASSESSMENT ===");
+    console.log("=== SURVIVAL STATE ASSESSMENT ===");
 
     const inventory = await bot.inventory.getInventory(bot.player.characterEntityId);
     const energy = Number(await bot.player.getPlayerEnergy());

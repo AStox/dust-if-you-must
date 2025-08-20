@@ -200,6 +200,12 @@ export class PlayerModule extends DustGameBase {
 
       const energyHex = result.staticData.slice(2);
       const energy = BigInt("0x" + energyHex.slice(32, 64));
+      
+      const MAX_ENERGY = 817600000000000000n;
+      const energyPercentage = Number(energy * 100n / MAX_ENERGY);
+      
+      console.log(`Energy: ${energyPercentage.toFixed(1)}%`);
+      
       return energy.toString();
     } catch (error) {
       return "0";

@@ -526,7 +526,6 @@ export class TreesModule extends DustGameBase {
    * Scan for saplings in a bounding box defined by two corners
    */
   async scanForSaplings(corner1: Vec3, corner2: Vec3): Promise<SaplingInfo[]> {
-    const saplings: SaplingInfo[] = [];
     const treeTypes = this.getTreeTypes();
     const saplingIds = new Set(treeTypes.map((t) => t.sapling));
 
@@ -569,44 +568,70 @@ export class TreesModule extends DustGameBase {
 
     await Promise.all(chunkPromises);
 
-    let blocksScanned = 0;
+    // Collect sapling positions first, then batch check growth status
+    const saplingCandidates: Array<{
+      position: Vec3;
+      treeType: TreeTypeMapping;
+      saplingObjectId: number;
+    }> = [];
 
-    // Scan through all loaded blocks for saplings
+    // Pre-filter blocks by chunk bounds to avoid redundant checks
     for (const [chunkKey, blocks] of chunkData) {
+      const [cx, cy, cz] = chunkKey.split(",").map(Number);
+      const chunkMinX = cx * 16;
+      const chunkMaxX = chunkMinX + 15;
+      const chunkMinY = cy * 16;
+      const chunkMaxY = chunkMinY + 15;
+      const chunkMinZ = cz * 16;
+      const chunkMaxZ = chunkMinZ + 15;
+
+      // Skip chunk if it doesn't intersect our bounding box
+      if (
+        chunkMaxX < minX ||
+        chunkMinX > maxX ||
+        chunkMaxY < minY ||
+        chunkMinY > maxY ||
+        chunkMaxZ < minZ ||
+        chunkMinZ > maxZ
+      ) {
+        continue;
+      }
+
       for (const [blockKey, blockData] of blocks) {
+        if (!saplingIds.has(blockData.blockType)) continue;
+
         const [x, y, z] = blockKey.split(",").map(Number);
 
-        // Skip if outside our bounding box
-        if (
-          x < minX ||
-          x > maxX ||
-          y < minY ||
-          y > maxY ||
-          z < minZ ||
-          z > maxZ
-        )
+        // Final bounding box check only for sapling blocks
+        if (x < minX || x > maxX || y < minY || y > maxY || z < minZ || z > maxZ)
           continue;
 
-        blocksScanned++;
+        const treeType = this.getTreeTypeByObjectId(blockData.blockType);
+        if (!treeType) continue;
 
-        if (saplingIds.has(blockData.blockType)) {
-          const treeType = this.getTreeTypeByObjectId(blockData.blockType);
-          if (!treeType) continue;
-
-          const pos = { x, y, z };
-          // Check if sapling is ready to grow
-          const isReadyToGrow = await this.farming.isPlantReadyToGrow(pos);
-
-          saplings.push({
-            position: pos,
-            type: treeType.name,
-            distance: 0,
-            saplingObjectId: blockData.blockType,
-            isReadyToGrow,
-          });
-        }
+        saplingCandidates.push({
+          position: { x, y, z },
+          treeType,
+          saplingObjectId: blockData.blockType,
+        });
       }
     }
+
+    // Batch check growth status for all saplings in parallel
+    const growthPromises = saplingCandidates.map(async (candidate) => {
+      const isReadyToGrow = await this.farming.isPlantReadyToGrow(
+        candidate.position
+      );
+      return {
+        position: candidate.position,
+        type: candidate.treeType.name,
+        distance: 0,
+        saplingObjectId: candidate.saplingObjectId,
+        isReadyToGrow,
+      };
+    });
+
+    const saplings = await Promise.all(growthPromises);
 
     if (saplings.length > 0) {
       console.log(`🌱 Found ${saplings.length} saplings`);

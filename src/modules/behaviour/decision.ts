@@ -43,6 +43,9 @@ export async function selectBestBehaviorMode(
   bot: DustBot,
   availableModes: IBehaviorMode[]
 ): Promise<IBehaviorMode | null> {
+  console.log("\nMODE SELECTION");
+  console.log("─".repeat(40));
+  
   const viableModes: Array<{ mode: IBehaviorMode; priority: number }> = [];
 
   if (availableModes.length > 1) {
@@ -61,7 +64,7 @@ export async function selectBestBehaviorMode(
       }
     }
   } else {
-    console.log("mode:", availableModes[0].name);
+    console.log(`  🎯 Only one mode available: ${availableModes[0].name}`);
     return availableModes[0];
   }
 
@@ -80,13 +83,16 @@ export async function selectBestBehaviorMode(
 }
 
 /**
- * Execute a complete behavior cycle: mode selection -> state assessment -> action selection -> execution
+ * Execute a complete behavior cycle: activation check -> mode selection -> state assessment -> action selection -> execution
  */
 export async function executeBehaviorCycle(
   bot: DustBot,
   availableModes: IBehaviorMode[]
 ): Promise<boolean> {
   try {
+    // Check if bot is alive and activate if needed at the beginning of every cycle
+    await bot.player.checkStatusAndActivate(bot);
+
     // Select best behavior mode
     const selectedMode = await selectBestBehaviorMode(bot, availableModes);
 
@@ -95,21 +101,20 @@ export async function executeBehaviorCycle(
     }
 
     // Assess state for the selected mode
+    console.log(`\n📊 STATE ASSESSMENT PHASE - ${selectedMode.name.toUpperCase()}`);
+    console.log("─".repeat(50));
+    
     const assessStart = Date.now();
     const state = await selectedMode.assessState(bot);
     const assessTime = Date.now() - assessStart;
-    console.log(`⏱️ assessState took ${assessTime}ms for ${selectedMode.name}`);
+    console.log(`⏱️ Assessment completed in ${assessTime}ms`);
 
     // Update bot.state with fresh assessment for use in action execution
     bot.state = state;
 
     // Select and execute action
-    console.log(
-      "=".repeat(30) +
-        " Selecting action for mode: " +
-        selectedMode.name +
-        " ".repeat(30)
-    );
+    console.log(`\n⚡ ACTION SELECTION PHASE - ${selectedMode.name.toUpperCase()}`);
+    console.log("─".repeat(50));
     const action = await selectedMode.selectAction(state);
 
     console.log(

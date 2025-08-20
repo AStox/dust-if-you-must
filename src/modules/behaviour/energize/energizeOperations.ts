@@ -116,8 +116,8 @@ export function getEnergizeInventoryConfig(): InventoryManagementConfig {
     ],
     targetItems: [
       { type: oakSaplingId, target: 64 }, // Want full stack of saplings
-      // Only keep 1 axe (best one available)
-      ...axeTypeIds.map(axeId => ({ type: axeId, target: 0, max: 1 }))
+      // Need 1 axe (best one available)
+      ...axeTypeIds.map(axeId => ({ type: axeId, target: 1, max: 1 }))
     ],
   };
 }
@@ -284,6 +284,16 @@ async function scanTreeFarmBlocks(
         const chunkFoundBlocks = [];
         for (let j = 0; j < chunk.length; j++) {
           const blockType = chunkBlockTypes[j];
+          
+          // Debug specific position
+          if (chunk[j].x === -405 && chunk[j].y === 78 && chunk[j].z === 456) {
+            console.log(`🐛 DEBUG: Block at (-405,78,456) has type: ${blockType} (null=${blockType === null})`);
+            console.log(`🐛 DEBUG: Tree block types: ${treeBlockTypeIds}`);
+            console.log(`🐛 DEBUG: Sapling types: ${saplingTypeIds}`);
+            console.log(`🐛 DEBUG: Is tree block: ${blockType && treeBlockTypeIds.includes(blockType)}`);
+            console.log(`🐛 DEBUG: Is sapling: ${blockType && saplingTypeIds.includes(blockType)}`);
+          }
+          
           if (blockType && treeBlockTypeIds.includes(blockType)) {
             chunkFoundBlocks.push(chunk[j]);
           } else if (blockType && saplingTypeIds.includes(blockType)) {
@@ -1083,7 +1093,9 @@ export async function hasPlantablePositionsInChunk(
   chunkBounds: { corner1: Vec3; corner2: Vec3 }
 ): Promise<boolean> {
   const positions = await getPlantablePositionsInChunk(bot, chunkBounds);
-  return positions.length > 0;
+  const hasPositions = positions.length > 0;
+  console.log(`🔍 hasPlantablePositionsInChunk: found ${positions.length} positions, returning ${hasPositions}`);
+  return hasPositions;
 }
 
 export async function getPlantablePositionsInChunk(

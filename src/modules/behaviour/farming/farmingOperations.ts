@@ -94,14 +94,18 @@ export async function fillBuckets(bot: DustBot) {
     .map(({ index }) => index);
   console.log("emptyBucketSlots", emptyBucketSlots);
 
-  for (const emptySlot of emptyBucketSlots) {
+  // Process bucket filling operations in parallel
+  const bucketPromises = emptyBucketSlots.map(async (emptySlot) => {
     try {
       console.log(`🪣 Filling empty bucket in slot ${emptySlot}...`);
       await bot.farming.fillBucket(waterPosition, emptySlot);
+      console.log(`✅ Filled bucket in slot ${emptySlot}`);
     } catch (error) {
       console.log(`⚠️ Failed to fill bucket in slot ${emptySlot}: ${error}`);
     }
-  }
+  });
+
+  await Promise.all(bucketPromises);
 }
 
 export async function walkToHouse(bot: DustBot) {
@@ -189,33 +193,56 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[], waterBucke
 
   console.log("waterBucketSlots", waterBucketSlots);
 
-  // Water plots one by one until we run out of water or plots
-  let waterBucketIndex = 0;
-  for (const plot of farmPlots) {
-    if (waterBucketIndex >= waterBucketSlots.length) {
-      console.log("🪣 Out of water buckets - stopping watering");
-      break;
-    }
-
-    // console.log("checking plot", plot);
-
+  // Check all plots in parallel to identify which need watering
+  const plotChecks = farmPlots.map(async (plot) => {
     const plotType = await bot.world.getBlockType(plot);
-    if (plotType !== getObjectIdByName("Farmland")!) {
+    const needsWatering = plotType === getObjectIdByName("Farmland")!;
+
+    return {
+      plot,
+      plotType,
+      needsWatering,
+    };
+  });
+
+  const plotResults = await Promise.all(plotChecks);
+  
+  // Filter plots that need watering and limit to available water buckets
+  const plotsToWater = plotResults
+    .filter(({ needsWatering }) => needsWatering)
+    .slice(0, waterBucketSlots.length)
+    .map(({ plot }, index) => ({ plot, bucketSlot: waterBucketSlots[index] }));
+
+  console.log(`💧 Found ${plotsToWater.length} plots ready for watering (limited by ${waterBucketSlots.length} available water buckets)`);
+
+  // Log skipped plots
+  for (const { plot, plotType, needsWatering } of plotResults) {
+    if (!needsWatering) {
       console.log(
         `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
       );
-      continue; // Skip already watered or non-farmland plots
     }
+  }
 
+  if (plotsToWater.length === 0) {
+    console.log("ℹ️ No plots available for watering");
+    return;
+  }
+
+  // Process watering operations in parallel
+  const wateringPromises = plotsToWater.map(async ({ plot, bucketSlot }) => {
     try {
-      await bot.farming.wetFarmland(plot, waterBucketSlots[waterBucketIndex]);
-      waterBucketIndex++;
+      await bot.farming.wetFarmland(plot, bucketSlot);
+      console.log(`✅ Watered plot at (${plot.x}, ${plot.y}, ${plot.z})`);
     } catch (error) {
       console.log(
         `⚠️ Failed to water plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
       );
     }
-  }
+  });
+
+  await Promise.all(wateringPromises);
+  console.log(`✅ Watering operations completed for ${plotsToWater.length} plots`);
 }
 
 export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[], wheatSeeds: number, inventory: any[]) {
@@ -223,62 +250,79 @@ export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[], wheatSeeds:
   console.log("🚜 SEEDING FARM PLOTS");
   console.log("=".repeat(60));
 
-  let remainingSeeds = wheatSeeds;
-  console.log(`🌾 Starting with ${remainingSeeds} wheat seeds`);
+  console.log(`🌾 Starting with ${wheatSeeds} wheat seeds`);
   
   // Debug: Check what seeds are actually in the inventory
   const seedId = getObjectIdByName("WheatSeed")!;
   const seedItems = inventory.filter((item) => item.type === seedId);
   console.log(`🔍 Debug: Found ${seedItems.length} seed items in inventory:`, seedItems.map(item => `${item.amount} seeds in slot`));
 
-  // Water plots one by one until we run out of water or plots
-  for (const plot of farmPlots) {
-    // console.log("checking plot", plot);
-
+  // Check all plots in parallel to identify which need seeding
+  const plotChecks = farmPlots.map(async (plot) => {
     const plotType = await bot.world.getBlockType(plot);
-    if (plotType !== getObjectIdByName("WetFarmland")!) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
-      );
-      continue; // Skip can only seed on wet farmland
-    }
-
     const plotType2 = await bot.world.getBlockType({
       x: plot.x,
       y: plot.y + 1,
       z: plot.z,
     });
-    if (plotType2 === getObjectIdByName("WheatSeed")!) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - already has wheat`
-      );
-      continue; // Skip can only seed where there isn't wheat already
-    }
 
-    if (remainingSeeds === 0) {
-      console.log("🪣 Out of seeds - stopping seeding");
-      break;
-    }
+    const needsSeeding = 
+      plotType === getObjectIdByName("WetFarmland")! &&
+      plotType2 !== getObjectIdByName("WheatSeed")!;
 
+    return {
+      plot,
+      plotType,
+      plotType2,
+      needsSeeding,
+    };
+  });
+
+  const plotResults = await Promise.all(plotChecks);
+  
+  // Filter plots that need seeding and limit to available seeds
+  const plotsToSeed = plotResults
+    .filter(({ needsSeeding }) => needsSeeding)
+    .slice(0, wheatSeeds)
+    .map(({ plot }) => plot);
+
+  console.log(`🌱 Found ${plotsToSeed.length} plots ready for seeding (limited by ${wheatSeeds} available seeds)`);
+
+  // Log skipped plots
+  for (const { plot, plotType, plotType2, needsSeeding } of plotResults) {
+    if (!needsSeeding) {
+      if (plotType !== getObjectIdByName("WetFarmland")!) {
+        console.log(
+          `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
+        );
+      } else if (plotType2 === getObjectIdByName("WheatSeed")!) {
+        console.log(
+          `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - already has wheat`
+        );
+      }
+    }
+  }
+
+  if (plotsToSeed.length === 0) {
+    console.log("ℹ️ No plots available for seeding");
+    return;
+  }
+
+  // Process seeding operations in parallel
+  const seedingPromises = plotsToSeed.map(async (plot, index) => {
     try {
-      const seedId = getObjectIdByName("WheatSeed")!;
       console.log(`🌱 Attempting to plant seed type ${seedId} at (${plot.x}, ${plot.y}, ${plot.z})`);
-      
-      // Debug: check current inventory right before planting
-      const currentInventory = await bot.inventory.getInventory(bot.player.characterEntityId);
-      const currentSeedItems = currentInventory.filter((item) => item.type === seedId);
-      console.log(`🔍 Real-time inventory check: ${currentSeedItems.length} seed items:`, 
-        currentSeedItems.map(item => `${item.amount} seeds`));
-      
       await bot.farming.plantSeedType(plot, seedId);
-      remainingSeeds--;
-      console.log(`✅ Seeded plot at (${plot.x}, ${plot.y}, ${plot.z}), ${remainingSeeds} seeds remaining`);
+      console.log(`✅ Seeded plot at (${plot.x}, ${plot.y}, ${plot.z})`);
     } catch (error) {
       console.log(
         `⚠️ Failed to seed plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
       );
     }
-  }
+  });
+
+  await Promise.all(seedingPromises);
+  console.log(`✅ Seeding operations completed for ${plotsToSeed.length} plots`);
 }
 
 export async function growSeededFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
@@ -341,29 +385,60 @@ export async function harvestFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
   // Commit chunks around player before harvesting
   await commitChunksAroundPlayer(bot);
 
-  for (const plot of farmPlots) {
-    // console.log("checking plot", plot);
-
+  // Check all plots in parallel to identify which have wheat to harvest
+  const plotChecks = farmPlots.map(async (plot) => {
     const plotType = await bot.world.getBlockType({
       x: plot.x,
       y: plot.y + 1,
       z: plot.z,
     });
-    if (plotType !== getObjectIdByName("Wheat")!) {
+
+    const needsHarvesting = plotType === getObjectIdByName("Wheat")!;
+
+    return {
+      plot,
+      plotType,
+      needsHarvesting,
+    };
+  });
+
+  const plotResults = await Promise.all(plotChecks);
+  
+  // Filter plots that need harvesting
+  const plotsToHarvest = plotResults
+    .filter(({ needsHarvesting }) => needsHarvesting)
+    .map(({ plot }) => plot);
+
+  console.log(`🌾 Found ${plotsToHarvest.length} plots ready for harvesting`);
+
+  // Log skipped plots
+  for (const { plot, plotType, needsHarvesting } of plotResults) {
+    if (!needsHarvesting) {
       console.log(
         `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
       );
-      continue; // Skip can only harvest wheat
     }
+  }
 
+  if (plotsToHarvest.length === 0) {
+    console.log("ℹ️ No plots available for harvesting");
+    return;
+  }
+
+  // Process harvesting operations in parallel
+  const harvestingPromises = plotsToHarvest.map(async (plot) => {
     try {
       await bot.farming.harvest(plot);
+      console.log(`✅ Harvested plot at (${plot.x}, ${plot.y}, ${plot.z})`);
     } catch (error) {
       console.log(
         `⚠️ Failed to harvest plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
       );
     }
-  }
+  });
+
+  await Promise.all(harvestingPromises);
+  console.log(`✅ Harvesting operations completed for ${plotsToHarvest.length} plots`);
 }
 
 export async function transferToFromChest(bot: DustBot) {
@@ -395,9 +470,13 @@ export async function transferToFromChest(bot: DustBot) {
     0, // Empty slots (type 0)
   ]);
 
-  // Find items that don't belong in farming inventory
-  for (const item of playerInventory) {
-    if (!allowedItems.has(item.type) && item.amount > 0) {
+  // Find items that don't belong in farming inventory and transfer them in parallel
+  const itemsToCleanup = playerInventory.filter(
+    (item) => !allowedItems.has(item.type) && item.amount > 0
+  );
+
+  if (itemsToCleanup.length > 0) {
+    const cleanupPromises = itemsToCleanup.map(async (item) => {
       const itemName =
         Object.keys(getObjectIdByName as any).find(
           (name) => (getObjectIdByName as any)(name) === item.type
@@ -415,7 +494,9 @@ export async function transferToFromChest(bot: DustBot) {
       } catch (error) {
         console.log(`❌ Failed to transfer ${itemName}: ${error}`);
       }
-    }
+    });
+
+    await Promise.all(cleanupPromises);
   }
 
   // Get chest inventory once for efficiency

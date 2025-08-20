@@ -346,12 +346,6 @@ export class ConfigLoader {
       }
     }
 
-    if (overrideCount > 0) {
-      console.log(`🔧 Applied ${overrideCount} environment variable overrides`);
-    } else {
-      console.log("🔧 No environment variable overrides found");
-    }
-
     return updatedConfig;
   }
 
