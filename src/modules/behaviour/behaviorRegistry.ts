@@ -71,7 +71,7 @@ export class BehaviorRegistry {
 
     for (const mode of this.modes.values()) {
       try {
-        const isAvailable = await mode.isAvailable(bot);
+        const isAvailable = await mode.isAvailable(bot.state);
         if (isAvailable) {
           availableModes.push(mode);
         }

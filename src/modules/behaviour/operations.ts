@@ -21,7 +21,6 @@ export async function walkToCoast(bot: DustBot) {
   );
 
   try {
-    await bot.checkPlayerStatus("Moving to coast");
     await bot.movement.moveTowards(coastPosition);
     console.log("✅ Reached the coast!");
   } catch (error) {
@@ -84,7 +83,6 @@ export async function walkToFarmCenter(bot: DustBot) {
   );
 
   try {
-    await bot.checkPlayerStatus("Moving to farm center");
     await bot.movement.moveTowards(farmCenter);
     console.log("✅ Reached the farm center!");
   } catch (error) {

@@ -16,6 +16,7 @@
     "energize": "tsx scripts/energize-procedure.ts",
     "survival": "tsx scripts/survival-procedure.ts",
     "comprehensive": "tsx scripts/comprehensive-procedure.ts",
+    "comprehensive:debug": "tsx scripts/comprehensive-procedure.ts --debug",
     "move": "tsx scripts/simple-move.ts",
     "pickup": "tsx scripts/pickup-all.ts",
     "toChunkCoord": "tsx scripts/to-chunk-coord.ts",

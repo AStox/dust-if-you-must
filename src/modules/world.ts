@@ -252,7 +252,6 @@ export class WorldModule extends DustGameBase {
             this.isPassThrough(currentType) &&
             !this.isPassThrough(belowType)
           ) {
-            console.log(`✅ Found ground level at [${x}, ${currentY}, ${z}]`);
             return currentY;
           }
         }
@@ -395,7 +394,7 @@ export class WorldModule extends DustGameBase {
     try {
       blockType = await this.getObjectTypeAt(coord);
     } catch (error) {
-      console.log("No object type found, trying to get block type");
+      // console.log("No object type found, trying to get block type");
     }
 
     const worldAddress = this.worldContract.target as string;

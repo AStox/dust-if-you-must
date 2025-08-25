@@ -6,7 +6,7 @@ import { EnergizeMode } from "../src/modules/behaviour/energize/energizeMode.js"
 runProcedure({
   mode: new EnergizeMode(),
   configRequirements: { requireEnergizeAreas: true },
-}).catch((error) => {
+}).catch((error: any) => {
   console.error("💥 Fatal error in energize procedure:", error);
   process.exit(1);
 });

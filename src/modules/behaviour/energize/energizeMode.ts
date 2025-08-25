@@ -25,6 +25,7 @@ import {
   getEnergizeInventoryConfig,
 } from "./energizeOperations.js";
 import { InventoryManager } from "../shared/inventoryManager.js";
+import { getItemCount } from "../../../utils.js";
 
 // Energize-specific constants
 export const MAX_ENERGY: number = 817600000000000000;
@@ -36,6 +37,9 @@ export const DEFAULT_OPERATION_DELAY = 2000; // milliseconds
 export class EnergizeMode extends BaseBehaviorMode {
   readonly name = "ENERGIZE";
   protected priority = 80; // Medium priority - secondary to farming
+
+  // Cache for action execution results to avoid duplicate calls
+  private actionExecutionCache: Map<string, boolean> = new Map();
 
   private treesModule: TreesModule;
   private pathfindingModule: PathfindingModule;
@@ -67,9 +71,6 @@ export class EnergizeMode extends BaseBehaviorMode {
     const chunksZ = Math.ceil(farmDepth / chunkSize);
 
     this.totalChunks = chunksX * chunksZ;
-    console.log(
-      `🔢 Tree farm divided into ${this.totalChunks} chunks (${chunksX}x${chunksZ})`
-    );
   }
 
   private getChunkBounds(chunkIndex: number): { corner1: Vec3; corner2: Vec3 } {
@@ -136,29 +137,29 @@ export class EnergizeMode extends BaseBehaviorMode {
           axeCount !== 1 || oakSaplingCount < 1 || otherItemCount > 0;
 
         if (!needsSetup) {
-          console.log(
-            `    📦 MANAGE_INVENTORY: Perfect inventory already (${axeCount} axes, ${oakSaplingCount} saplings, ${otherItemCount} other)`
-          );
+          if (typeof global !== 'undefined' && global.debugLog) {
+            global.debugLog(`MANAGE_INVENTORY: axeCount=${axeCount} (need=1), oakSaplings=${oakSaplingCount} (need>=1), otherItems=${otherItemCount} (need=0), needsSetup=${needsSetup} → canExecute=false`);
+          }
           return false;
         }
 
         // Check if chest has required items
-        const axesInChest = state.chestInventory
-          .filter((item) => axeTypeIds.includes(item.type))
-          .reduce((acc, item) => acc + item.amount, 0);
+        const axesInChest = getItemCount(getObjectIdByName("WoodenAxe"), state.chestInventory) +
+          getItemCount(getObjectIdByName("CopperAxe"), state.chestInventory) +
+          getItemCount(getObjectIdByName("IronAxe"), state.chestInventory) +
+          getItemCount(getObjectIdByName("DiamondAxe"), state.chestInventory) +
+          getItemCount(getObjectIdByName("NeptuniumAxe"), state.chestInventory)
 
-        const saplingsInChest = state.chestInventory
-          .filter((item) => item.type === getObjectIdByName("OakSapling"))
-          .reduce((acc, item) => acc + item.amount, 0);
+        const saplingsInChest = getItemCount(getObjectIdByName("OakSapling"), state.chestInventory);
 
         const canSetup =
           (axeCount < 1 && axesInChest > 0) ||
           (oakSaplingCount < 1 && saplingsInChest > 0) ||
           otherItemCount > 0;
 
-        console.log(
-          `    📦 MANAGE_INVENTORY: need setup=${needsSetup}, chest has ${axesInChest} axes & ${saplingsInChest} saplings - canSetup=${canSetup}`
-        );
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`MANAGE_INVENTORY: axeCount=${axeCount} (need=1), oakSaplings=${oakSaplingCount} (need>=1), otherItems=${otherItemCount} (need=0), needsSetup=${needsSetup}, axesInChest=${axesInChest}, saplingsInChest=${saplingsInChest}, canSetup=${canSetup} → canExecute=${canSetup}`);
+        }
 
         return canSetup;
       },
@@ -176,13 +177,14 @@ export class EnergizeMode extends BaseBehaviorMode {
       name: "MINE_TREE_FARM",
       canExecute: (state) => {
         const playerHasAxe = hasAxe(state.inventory);
-        const hasTreeBlocks = (state as any).nearbyTreeBlocks;
-        console.log(
-          `    🪓 MINE_TREE_FARM: hasAxe=${playerHasAxe}, treeBlocks=${hasTreeBlocks}, chunk=${
-            this.currentChunk + 1
-          }/${this.totalChunks}`
-        );
-        return playerHasAxe && hasTreeBlocks;
+        const hasTreeBlocks = state.nearbyTreeBlocks || false;
+        const canExecute = playerHasAxe && hasTreeBlocks;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`MINE_TREE_FARM: playerHasAxe=${playerHasAxe}, hasTreeBlocks=${hasTreeBlocks} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
       },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
@@ -190,31 +192,26 @@ export class EnergizeMode extends BaseBehaviorMode {
       },
       execute: async (bot, state) => {
         const chunkBounds = this.getChunkBounds(this.currentChunk);
-        console.log(
-          `🪓 Mining chunk ${this.currentChunk + 1}/${this.totalChunks}: (${
-            chunkBounds.corner1.x
-          },${chunkBounds.corner1.z}) to (${chunkBounds.corner2.x},${
-            chunkBounds.corner2.z
-          })`
-        );
-
         await mineTreeFarmChunk(bot, chunkBounds);
       },
     },
     {
       name: "PLANT_SAPLINGS",
       canExecute: (state) => {
-        const hasOakSaplings = state.inventory.some(
+        const saplingItem = state.inventory.find(
           (item) =>
             item.type === getObjectIdByName("OakSapling") && item.amount > 0
         );
-        const hasPlantable = (state as any).hasPlantablePositions;
-        console.log(
-          `    🌱 PLANT_SAPLINGS:  hasOakSaplings=${hasOakSaplings}, hasPlantable=${hasPlantable}, chunk=${
-            this.currentChunk + 1
-          }/${this.totalChunks}`
-        );
-        return hasOakSaplings && hasPlantable;
+        const hasOakSaplings = !!saplingItem;
+        const saplingCount = saplingItem?.amount || 0;
+        const hasPlantable = state.hasPlantablePositions || false;
+        const canExecute = hasOakSaplings && hasPlantable;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`PLANT_SAPLINGS: oakSaplings=${saplingCount}, hasOakSaplings=${hasOakSaplings}, hasPlantablePositions=${hasPlantable} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
       },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
@@ -230,9 +227,11 @@ export class EnergizeMode extends BaseBehaviorMode {
       name: "CRAFT_BATTERIES",
       canExecute: (state) => {
         const hasExcessMaterials = hasExcessTreeMaterials(state.inventory);
-        console.log(
-          `    🔋 CRAFT_BATTERIES: hasExcessMaterials=${hasExcessMaterials}`
-        );
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`CRAFT_BATTERIES: hasExcessMaterials=${hasExcessMaterials} → canExecute=${hasExcessMaterials}`);
+        }
+        
         return hasExcessMaterials;
       },
       calculateScore: function (state) {
@@ -248,20 +247,22 @@ export class EnergizeMode extends BaseBehaviorMode {
       name: "ADVANCE_CHUNK",
       canExecute: (state) => {
         // Check if current chunk has no more actions available
-        const hasTreeBlocks = (state as any).nearbyTreeBlocks;
-        const hasPlantable = (state as any).hasPlantablePositions;
-        const hasOakSaplings = state.inventory.some(
+        const hasTreeBlocks = state.nearbyTreeBlocks || false;
+        const hasPlantable = state.hasPlantablePositions || false;
+        const saplingItem = state.inventory.find(
           (item) =>
             item.type === getObjectIdByName("OakSapling") && item.amount > 0
         );
+        const hasOakSaplings = !!saplingItem;
+        const saplingCount = saplingItem?.amount || 0;
 
         const noMoreActions =
           !hasTreeBlocks && (!hasPlantable || !hasOakSaplings);
-        console.log(
-          `    ➡️ ADVANCE_CHUNK: noTreeBlocks=${!hasTreeBlocks}, noPlantable=${
-            !hasPlantable || !hasOakSaplings
-          }, chunk=${this.currentChunk + 1}/${this.totalChunks}`
-        );
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`ADVANCE_CHUNK: hasTreeBlocks=${hasTreeBlocks}, hasPlantable=${hasPlantable}, oakSaplings=${saplingCount}, hasOakSaplings=${hasOakSaplings}, noMoreActions=${noMoreActions} → canExecute=${noMoreActions}`);
+        }
+        
         return noMoreActions;
       },
       calculateScore: function (state) {
@@ -277,202 +278,92 @@ export class EnergizeMode extends BaseBehaviorMode {
     },
   ];
 
-  async isAvailable(bot: DustBot): Promise<boolean> {
-    // Energize mode is available if we have any axes/saplings OR there's tree work to do
-    const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
+  async isAvailable(state: BotState): Promise<boolean> {
+    // Clear cache for fresh evaluation
+    this.actionExecutionCache.clear();
+    
+    // Check if any action can execute and cache the results
+    const executableActions = [];
+    for (const action of this.actions) {
+      const canExecute = action.canExecute(state);
+      this.actionExecutionCache.set(action.name, canExecute);
+      if (canExecute) {
+        executableActions.push(action.name);
+      }
+    }
+    
+    // Filter out MANAGE_INVENTORY for availability check - it's always available but not real work
+    const productiveActions = executableActions.filter(name => name !== "MANAGE_INVENTORY");
+    const available = productiveActions.length > 0;
+    
+    console.log(
+      `${available? '✅' : '❌'} ENERGIZE: executableActions=[${executableActions.join(', ')}], productive=[${productiveActions.join(', ')}]`
     );
 
-    // Count axes and oak saplings
-    let axeCount = 0;
-    let oakSaplingCount = 0;
+    return available;
+  }
 
-    for (const item of inventory) {
-      if (
-        item.type === getObjectIdByName("WoodenAxe") ||
-        item.type === getObjectIdByName("StoneAxe") ||
-        item.type === getObjectIdByName("IronAxe") ||
-        item.type === getObjectIdByName("DiamondAxe")
-      ) {
-        axeCount += item.amount;
-      } else if (item.type === getObjectIdByName("OakSapling")) {
-        oakSaplingCount += item.amount;
+  // Override selectAction to use cached results
+  async selectAction(state: BotState): Promise<UtilityAction> {
+    // If cache is empty, rebuild it
+    if (this.actionExecutionCache.size === 0) {
+      for (const action of this.actions) {
+        const canExecute = action.canExecute(state);
+        this.actionExecutionCache.set(action.name, canExecute);
       }
     }
 
-    // Check if there are trees or saplings to work with
-    const config = getOperationalConfig();
+    // Filter to only executable actions using cache
+    const executableActions = this.actions.filter(action => 
+      this.actionExecutionCache.get(action.name) === true
+    );
 
-    try {
-      const trees = await this.treesModule.scanForTrees(
-        config.areas.energize!.treeFarmBounds.corner1,
-        config.areas.energize!.treeFarmBounds.corner2
-      );
-      const saplings = await this.treesModule.scanForSaplings(
-        config.areas.energize!.treeFarmBounds.corner1,
-        config.areas.energize!.treeFarmBounds.corner2
-      );
-
-      const hasWork = trees.length > 0 || saplings.length > 0;
-
-      // Available if we have any axes, or any saplings, or there's tree work to do
-      return axeCount > 0 || oakSaplingCount > 0 || hasWork;
-    } catch (error) {
-      console.log("⚠️ Error checking for tree work:", error);
-      // No fallbacks - throw the error to fail properly
-      throw error;
+    if (executableActions.length === 0) {
+      console.log("⚠️ No executable actions found in ENERGIZE mode");
+      // Fall back to base class behavior which will throw an error
+      return super.selectAction(state);
     }
+
+    // Prioritize non-inventory actions - if any are available, exclude MANAGE_INVENTORY
+    const nonInventoryActions = executableActions.filter(action => action.name !== "MANAGE_INVENTORY");
+    const actionsToScore = nonInventoryActions.length > 0 ? nonInventoryActions : executableActions;
+
+    console.log(`📋 Considering ${actionsToScore.length} actions: [${actionsToScore.map(a => a.name).join(', ')}]`);
+    if (nonInventoryActions.length > 0 && executableActions.length > nonInventoryActions.length) {
+      console.log(`🎯 Prioritizing non-inventory actions (found ${nonInventoryActions.length})`);
+    }
+
+    // Calculate scores for selected actions
+    const scoredActions = actionsToScore.map(action => ({
+      action,
+      score: action.calculateScore(state)
+    }));
+
+    // Sort by score descending
+    scoredActions.sort((a, b) => b.score - a.score);
+
+    for (const { action, score } of scoredActions.slice(0, 3)) {
+      console.log(`  ${action.name}: ${score}`);
+    }
+
+    return scoredActions[0].action;
   }
 
-  async assessState(bot: DustBot): Promise<BotState> {
+  async assessState(bot: DustBot): Promise<Partial<BotState>> {
     // Initialize total chunks if not done yet
     if (this.totalChunks === 0) {
       this.calculateTotalChunks();
     }
 
-    const config = getOperationalConfig();
-    //TODO: Why do we have 3 caches?
-    this.pathfindingModule.clearCache();
-    bot.world.clearCache();
-    this.treesModule.clearCache();
-
-    const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
-    );
-    console.log(
-      "📦 Player inventory:",
-      inventory
-        .filter((item) => item.amount > 0)
-        .map((item) => `${ObjectTypes[item.type].name} x${item.amount}`)
-        .join(", ") || "empty"
-    );
-    const chestInventory = await bot.inventory.getInventory(
-      config.entities.chests?.rightChest
-    );
-    console.log(
-      "📦 Right Chest Inventory",
-      chestInventory
-        .filter((item) => item.amount > 0)
-        .map((item) => `${ObjectTypes[item.type].name} x${item.amount}`)
-        .join(", ") || "empty"
-    );
-
-    const energy = Number(await bot.player.getPlayerEnergy());
-    const position = await bot.player.getCurrentPosition();
-
-    const axeTypes = ["WoodenAxe", "StoneAxe", "IronAxe", "DiamondAxe"];
-    const oakSaplingId = getObjectIdByName("OakSapling");
-
-    // Count items in inventory (only axes and oak saplings for energize mode)
-    let axes = 0;
-    let oakSaplings = 0;
-    let otherItems = 0;
-
-    // Use helper functions from operations
-    const excludedTypes = getExcludedItemTypeIds();
-    const axeTypeIds = getAxeTypeIds();
-
-    for (const item of inventory) {
-      if (axeTypeIds.includes(item.type)) {
-        axes += item.amount;
-      } else if (item.type === oakSaplingId) {
-        oakSaplings += item.amount;
-      } else if (!excludedTypes.includes(item.type)) {
-        otherItems += item.amount;
-      }
-    }
-
-    // // Scan for tree blocks using operations function
-    // let nearbyTreeBlocks = false;
-    // try {
-    //   console.log("🔍 Checking for tree blocks...");
-    //   const start = Date.now();
-    //   nearbyTreeBlocks = await hasAvailableTreeBlocks(bot);
-    //   const end = Date.now();
-    //   console.log(`🔍 hasAvailableTreeBlocks took ${end - start}ms`);
-    // } catch (error) {
-    //   console.log("⚠️ Error scanning for tree blocks:", error);
-    // }
-
-    // // Check for plantable positions
-    // let hasPlantable = false;
-    // try {
-    //   console.log("🔍 Checking for plantable positions...");
-    //   const start = Date.now();
-    //   hasPlantable = await hasPlantablePositions(bot);
-    //   const end = Date.now();
-    //   console.log(`🔍 hasPlantablePositions took ${end - start}ms`);
-    // } catch (error) {
-    //   console.log("⚠️ Error checking plantable positions:", error);
-    // }
-
     // Check chunk-specific conditions
     const chunkBounds = this.getChunkBounds(this.currentChunk);
-    console.log(
-      `chunkBounds: ${chunkBounds.corner1.x}, ${chunkBounds.corner1.z} to ${chunkBounds.corner2.x}, ${chunkBounds.corner2.z}`
-    );
-    let nearbyTreeBlocks = false;
-    let hasPlantable = false;
-
-    try {
-      console.log(
-        `🔍 Checking chunk ${this.currentChunk + 1}/${
-          this.totalChunks
-        } for tree blocks...`
-      );
-      const start = Date.now();
-      nearbyTreeBlocks = await hasAvailableTreeBlocksInChunk(bot, chunkBounds);
-      const end = Date.now();
-      console.log(`🔍 hasAvailableTreeBlocksInChunk took ${end - start}ms`);
-    } catch (error) {
-      console.log("⚠️ Error scanning chunk for tree blocks:", error);
-    }
-
-    try {
-      console.log(
-        `🔍 Checking chunk ${this.currentChunk + 1}/${
-          this.totalChunks
-        } for plantable positions...`
-      );
-      const start = Date.now();
-      hasPlantable = await hasPlantablePositionsInChunk(bot, chunkBounds);
-      const end = Date.now();
-      console.log(`🔍 hasPlantablePositionsInChunk took ${end - start}ms, result: ${hasPlantable}`);
-    } catch (error) {
-      console.log("⚠️ Error checking chunk plantable positions:", error);
-    }
+    const nearbyTreeBlocks = await hasAvailableTreeBlocksInChunk(bot, chunkBounds);
+    const hasPlantable = await hasPlantablePositionsInChunk(bot, chunkBounds);
 
     const state = {
-      location: "unknown",
-      position,
-      energy,
-      inventory,
-      chestInventory,
-      // Standard BotState fields (using defaults for farming-specific fields)
-      emptyBuckets: 0,
-      waterBuckets: 0,
-      wheatSeeds: 0,
-      wheat: 0,
-      slop: 0,
-      unwateredPlots: 0,
-      unseededPlots: 0,
-      ungrownPlots: 0,
-      unharvestedPlots: 0,
-      totalPlots: 0,
-      // Extended state for energize mode
       nearbyTreeBlocks,
-      axes,
-      oakSaplings,
-      otherItems,
       hasPlantablePositions: hasPlantable,
-    } as BotState & {
-      nearbyTreeBlocks: boolean;
-      axes: number;
-      oakSaplings: number;
-      otherItems: number;
-      hasPlantablePositions: boolean;
-    };
-
+    } as Partial<BotState>;
     return state;
   }
 
@@ -483,30 +374,4 @@ export class EnergizeMode extends BaseBehaviorMode {
   getActions(): UtilityAction[] {
     return this.actions;
   }
-}
-
-export async function logEnergizeState(
-  state: BotState & {
-    nearbyTreeBlocks?: number;
-    axes?: number;
-    oakSaplings?: number;
-    otherItems?: number;
-    hasPlantablePositions?: boolean;
-  }
-): Promise<void> {
-  console.log("\n📊 Energize Mode State:");
-  console.log(`  Location: ${state.location}`);
-  console.log(
-    `  Position: (${state.position.x}, ${state.position.y}, ${state.position.z})`
-  );
-  console.log(
-    `  Energy: ${state.energy} (${(state.energy / MAX_ENERGY) * 100}%)`
-  );
-  console.log(`  Axes: ${state.axes || 0}`);
-  console.log(`  Oak Saplings: ${state.oakSaplings || 0}`);
-  console.log(`  Other Items: ${state.otherItems || 0}`);
-  console.log(`  Nearby Tree Blocks: ${state.nearbyTreeBlocks || 0}`);
-  console.log(
-    `  Has Plantable Positions: ${state.hasPlantablePositions || false}`
-  );
 }

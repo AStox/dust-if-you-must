@@ -22,19 +22,26 @@ export class SurvivalMode extends BaseBehaviorMode {
   readonly name = "SURVIVAL";
   protected priority = 1000; // Highest priority - survival takes precedence over everything
 
+  // Cache for action execution results to avoid duplicate calls
+  private actionExecutionCache: Map<string, boolean> = new Map();
+
   protected actions: UtilityAction[] = [
     {
       name: "RESTORE_ENERGY",
       canExecute: (state) => {
         const energyPercentage = calculateEnergyPercentage(BigInt(state.energy.toString()));
         const lowEnergy = hasLowEnergy(energyPercentage);
-        const hasSlop = getSlopCount(state.inventory) > 0 || getSlopCount(state.chestInventory) > 0;
+        const slopInInventory = getSlopCount(state.inventory);
+        const slopInChest = getSlopCount(state.chestInventory);
+        const hasSlop = slopInInventory > 0 || slopInChest > 0;
         
-        console.log(
-          `    🔋 RESTORE_ENERGY: energy=${energyPercentage.toFixed(1)}% (low=${lowEnergy}), hasSlop=${hasSlop}`
-        );
+        const canExecute = lowEnergy && hasSlop;
         
-        return lowEnergy && hasSlop;
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`RESTORE_ENERGY: energy=${state.energy} (${energyPercentage.toFixed(1)}%), lowEnergy=${lowEnergy} (threshold=${LOW_ENERGY_THRESHOLD}%), slopInInventory=${slopInInventory}, slopInChest=${slopInChest}, hasSlop=${hasSlop} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
       },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
@@ -55,75 +62,77 @@ export class SurvivalMode extends BaseBehaviorMode {
     },
   ];
 
-  async isAvailable(bot: DustBot): Promise<boolean> {
-    // Survival mode is available when survival actions are needed AND can be executed
-    const needsSurvival = await needsSurvivalAction(bot);
+  async isAvailable(state: BotState): Promise<boolean> {
+    // Clear cache for fresh evaluation
+    this.actionExecutionCache.clear();
     
-    if (!needsSurvival) {
-      return false;
+    // Check if any action can execute and cache the results
+    const executableActions = [];
+    for (const action of this.actions) {
+      const canExecute = action.canExecute(state);
+      this.actionExecutionCache.set(action.name, canExecute);
+      if (canExecute) {
+        executableActions.push(action.name);
+      }
     }
     
-    // Check if we actually have executable actions
-    const energy = Number(await bot.player.getPlayerEnergy());
-    const inventory = await bot.inventory.getInventory(bot.player.characterEntityId);
-    const config = getOperationalConfig();
-    const chestInventory = await bot.inventory.getInventory(config.entities.chests?.rightChest);
+    const available = executableActions.length > 0;
     
-    const energyPercentage = calculateEnergyPercentage(BigInt(energy));
-    const hasSlop = getSlopCount(inventory) > 0 || getSlopCount(chestInventory) > 0;
-    
-    console.log(`🔍 SURVIVAL isAvailable debug:`);
-    console.log(`  needsSurvival=${needsSurvival} (energy=${energyPercentage.toFixed(1)}% < ${LOW_ENERGY_THRESHOLD * 100}%)`);
-    console.log(`  hasSlop=${hasSlop} (player=${getSlopCount(inventory)}, chest=${getSlopCount(chestInventory)})`);
-    console.log(`  RESTORE_ENERGY can execute: ${hasSlop}`);
-    
-    // Only available if we need survival AND have the resources to do something about it
-    return needsSurvival && hasSlop;
+    console.log(
+      `${available? '✅' : '❌'} SURVIVAL: executableActions=[${executableActions.join(', ')}]`
+    );
+
+    return available;
   }
 
-  async assessState(bot: DustBot): Promise<BotState> {
-    console.log("=== SURVIVAL STATE ASSESSMENT ===");
+  // Override selectAction to use cached results
+  async selectAction(state: BotState): Promise<UtilityAction> {
+    // If cache is empty, rebuild it
+    if (this.actionExecutionCache.size === 0) {
+      for (const action of this.actions) {
+        const canExecute = action.canExecute(state);
+        this.actionExecutionCache.set(action.name, canExecute);
+      }
+    }
 
-    const inventory = await bot.inventory.getInventory(bot.player.characterEntityId);
-    const energy = Number(await bot.player.getPlayerEnergy());
-    const position = await bot.player.getCurrentPosition();
+    // Filter to only executable actions using cache
+    const executableActions = this.actions.filter(action => 
+      this.actionExecutionCache.get(action.name) === true
+    );
 
+    if (executableActions.length === 0) {
+      console.log("⚠️ No executable actions found in SURVIVAL mode");
+      // Fall back to base class behavior which will throw an error
+      return super.selectAction(state);
+    }
+
+    // Calculate scores for executable actions
+    const scoredActions = executableActions.map(action => ({
+      action,
+      score: action.calculateScore(state)
+    }));
+
+    // Sort by score descending
+    scoredActions.sort((a, b) => b.score - a.score);
+
+    for (const { action, score } of scoredActions.slice(0, 3)) {
+      console.log(`  ${action.name}: ${score}`);
+    }
+
+    return scoredActions[0].action;
+  }
+
+  async assessState(bot: DustBot): Promise<Partial<BotState>> {
     // Get chest inventory to check for resources
     const config = getOperationalConfig();
     const chestInventory = await bot.inventory.getInventory(
       config.entities.chests?.rightChest
     );
 
-    const energyPercentage = calculateEnergyPercentage(BigInt(energy));
-    const playerSlopCount = getSlopCount(inventory);
-    const chestSlopCount = getSlopCount(chestInventory);
-
-    console.log(`🔋 Energy: ${energyPercentage.toFixed(1)}%`);
-    console.log(`🍽️ Player slop: ${playerSlopCount}`);
-    console.log(`🗃️ Chest slop: ${chestSlopCount}`);
-
-    // Create a minimal state for survival mode
-    // Use defaults for farming-specific fields since survival doesn't care about them
     const state = {
-      location: "unknown" as const,
-      position,
-      energy,
-      inventory,
       chestInventory,
-      // Default values for farming fields (not relevant for survival)
-      emptyBuckets: 0,
-      waterBuckets: 0,
-      wheatSeeds: 0,
-      wheat: 0,
-      slop: playerSlopCount,
-      unwateredPlots: 0,
-      unseededPlots: 0,
-      ungrownPlots: 0,
-      unharvestedPlots: 0,
-      totalPlots: 0,
     };
 
-    console.log("✅ Survival state assessment complete");
     return state;
   }
 
@@ -134,21 +143,4 @@ export class SurvivalMode extends BaseBehaviorMode {
   getActions(): UtilityAction[] {
     return this.actions;
   }
-}
-
-export async function logSurvivalState(
-  state: BotState
-): Promise<void> {
-  const energyPercentage = calculateEnergyPercentage(BigInt(state.energy.toString()));
-  const playerSlopCount = getSlopCount(state.inventory);
-  const chestSlopCount = getSlopCount(state.chestInventory);
-
-  console.log("\n🚨 Survival Mode State:");
-  console.log(`  Position: (${state.position.x}, ${state.position.y}, ${state.position.z})`);
-  console.log(`  Energy: ${state.energy} (${energyPercentage.toFixed(1)}%)`);
-  console.log(`  Low Energy Threshold: ${(LOW_ENERGY_THRESHOLD * 100).toFixed(0)}%`);
-  console.log(`  Target Energy: ${(TARGET_ENERGY_THRESHOLD * 100).toFixed(0)}%`);
-  console.log(`  Player Slop: ${playerSlopCount}`);
-  console.log(`  Chest Slop: ${chestSlopCount}`);
-  console.log(`  Critical Action Needed: ${hasLowEnergy(energyPercentage) && (playerSlopCount > 0 || chestSlopCount > 0)}`);
 }

@@ -65,6 +65,8 @@ export interface BotState {
   totalPlots: number;
   inventory: InventoryItem[];
   chestInventory: InventoryItem[];
+  nearbyTreeBlocks: boolean;
+  hasPlantablePositions: boolean;
 }
 
 export interface UtilityAction {

@@ -2,9 +2,9 @@ import { getOperationalConfig } from "../../../config/loader.js";
 import { DustBot } from "../../../index.js";
 import { EntityId, Vec3 } from "../../../types/base.js";
 import { getObjectIdByName } from "../../../types/objectTypes.js";
+import { getItemCount } from "../../../utils.js";
 
 // Survival constants
-export const WHEAT_SLOP_ID = 32790; // WheatSlop object ID
 export const MAX_ENERGY = 817600000000000000n; // From Constants.sol
 export const LOW_ENERGY_THRESHOLD = 0.15; // 15%
 export const TARGET_ENERGY_THRESHOLD = 0.80; // 80%
@@ -37,9 +37,7 @@ export function calculateSlopNeeded(currentEnergy: bigint): number {
  * Gets the count of slop in inventory
  */
 export function getSlopCount(inventory: { type: number; amount: number }[]): number {
-  return inventory
-    .filter((item) => item.type === WHEAT_SLOP_ID)
-    .reduce((sum, item) => sum + item.amount, 0);
+  return getItemCount(getObjectIdByName("WheatSlop"), inventory);
 }
 
 /**
@@ -49,7 +47,7 @@ export async function getSlopSlots(
   bot: DustBot,
   entityId: EntityId
 ): Promise<[number, number][]> {
-  return await bot.inventory.getAllSlotsForItemType(WHEAT_SLOP_ID, entityId);
+  return await bot.inventory.getAllSlotsForItemType(getObjectIdByName("WheatSlop"), entityId);
 }
 
 /**
@@ -78,7 +76,7 @@ export async function eatSlopFromInventory(
     }
   }
 
-  // Verify energy is now at target
+  // Re-fetch energy only after eating to verify the result
   const currentEnergyStr = await bot.player.getPlayerEnergy();
   const currentEnergy = BigInt(currentEnergyStr);
   const energyPercentage = calculateEnergyPercentage(currentEnergy);
@@ -96,9 +94,7 @@ export async function getSlopFromChest(
   const config = getOperationalConfig();
   const rightChestEntity = config.entities.chests.rightChest as EntityId;
 
-  // Check if chest has slop
-  const chestSlots = await getSlopSlots(bot, rightChestEntity);
-  const chestSlopCount = chestSlots.reduce((sum, [_, amount]) => sum + amount, 0);
+  const chestSlopCount = getItemCount(getObjectIdByName("WheatSlop"), bot.state.chestInventory);
 
   console.log(`🗃️ Chest has ${chestSlopCount} slop`);
 
@@ -121,7 +117,7 @@ export async function getSlopFromChest(
     await bot.inventory.transferExactAmount(
       rightChestEntity,
       bot.player.characterEntityId,
-      WHEAT_SLOP_ID,
+      getObjectIdByName("WheatSlop"),
       slopToTake
     );
 
@@ -136,9 +132,8 @@ export async function getSlopFromChest(
  */
 export async function checkAndRestoreEnergy(bot: DustBot): Promise<boolean> {
   try {
-    // Get current energy
-    const currentEnergyStr = await bot.player.getPlayerEnergy();
-    const currentEnergy = BigInt(currentEnergyStr);
+    // Use pre-fetched energy from bot.state
+    const currentEnergy = BigInt(bot.state.energy);
     const energyPercentage = calculateEnergyPercentage(currentEnergy);
 
     console.log(`🔋 Current energy: ${energyPercentage.toFixed(1)}%`);
@@ -154,9 +149,9 @@ export async function checkAndRestoreEnergy(bot: DustBot): Promise<boolean> {
     const slopNeeded = calculateSlopNeeded(currentEnergy);
     console.log(`🎯 Target: ${(TARGET_ENERGY_THRESHOLD * 100).toFixed(0)}% energy, need ${slopNeeded} slop`);
 
-    // Check player inventory for slop
-    const playerInventory = await bot.inventory.getInventory(bot.player.characterEntityId);
-    const playerSlopCount = getSlopCount(playerInventory);
+    // Use pre-fetched player inventory
+    const playerInventory = bot.state.inventory;
+    const playerSlopCount = getItemCount(getObjectIdByName("WheatSlop"), playerInventory);
 
     console.log(`📦 Player has ${playerSlopCount} slop in inventory`);
 
@@ -189,6 +184,7 @@ export async function checkAndRestoreEnergy(bot: DustBot): Promise<boolean> {
 
 /**
  * Utility function to check if survival actions are needed
+ * @deprecated Use hasLowEnergy(calculateEnergyPercentage(state.energy)) directly
  */
 export async function needsSurvivalAction(bot: DustBot): Promise<boolean> {
   try {

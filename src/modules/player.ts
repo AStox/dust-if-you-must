@@ -76,46 +76,6 @@ export class PlayerModule extends DustGameBase {
       "Activating player"
     );
   }
-  async checkPlayerStatus(
-    bot: DustBot,
-    action: string
-  ): Promise<{
-    position: Vec3;
-    energy: string;
-    isDead: boolean;
-    isSleeping: boolean;
-  }> {
-    try {
-      // Get comprehensive player state
-      const [isDead, isSleeping, position, energy] = await Promise.all([
-        bot.isPlayerDead(),
-        bot.isPlayerSleeping(),
-        bot.player.getCurrentPosition(),
-        bot.getPlayerEnergy(),
-      ]);
-
-      // Terse status display
-      const posStr = position
-        ? `(${position.x},${position.y},${position.z})`
-        : "(??,??,??)";
-
-      console.log(`${action} | energy:${energy} pos:${posStr}`);
-
-      // Stop if dead
-      if (isDead) {
-        throw new Error("❌ Player died during farming - stopping operations");
-      }
-
-      return { position, energy, isDead, isSleeping };
-    } catch (error) {
-      console.log(
-        `⚠️ Status check failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      throw error;
-    }
-  }
 
   async isPlayerDead(entityId?: EntityId): Promise<boolean> {
     try {
@@ -167,8 +127,6 @@ export class PlayerModule extends DustGameBase {
     // await this.activate();
     const playerId = entityId || this.characterEntityId;
 
-    console.log(`🔍 Checking state for player: ${playerId}`);
-
     // Check if dead first (energy = 0)
     const isDead = await this.isPlayerDead(playerId);
     if (isDead) {
@@ -203,8 +161,6 @@ export class PlayerModule extends DustGameBase {
       
       const MAX_ENERGY = 817600000000000000n;
       const energyPercentage = Number(energy * 100n / MAX_ENERGY);
-      
-      console.log(`Energy: ${energyPercentage.toFixed(1)}%`);
       
       return energy.toString();
     } catch (error) {

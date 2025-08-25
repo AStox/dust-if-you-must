@@ -21,10 +21,6 @@ export class FarmingModule extends DustGameBase {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
     }
 
-    console.log(
-      `💧 Filling bucket at (${coord.x}, ${coord.y}, ${coord.z}) from slot ${slot}`
-    );
-
     await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.BUCKET_SYSTEM,
       "fillBucket(bytes32,uint96,uint16)",

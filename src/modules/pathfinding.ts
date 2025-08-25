@@ -2305,9 +2305,6 @@ export class PathfindingModule extends DustGameBase {
     startPos: Vec3,
     batch: Vec3[]
   ): Promise<BatchValidationResult> {
-    console.log(
-      `🔍 Starting comprehensive batch validation for ${batch.length} coordinates`
-    );
 
     let currentPos = startPos;
     let currentMoveUnits = 0;
@@ -2320,12 +2317,6 @@ export class PathfindingModule extends DustGameBase {
 
     for (let i = 0; i < batch.length; i++) {
       const nextPos = batch[i];
-
-      console.log(
-        `  📍 Validating step ${i + 1}/${batch.length}: (${currentPos.x}, ${
-          currentPos.y
-        }, ${currentPos.z}) -> (${nextPos.x}, ${nextPos.y}, ${nextPos.z})`
-      );
 
       // 1. Check Chebyshev distance (max 1 block)
       const chebyshevDistance = Math.max(

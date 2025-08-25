@@ -208,9 +208,9 @@ export const ObjectTypes: Record<number, ObjectType> = {
 } as const;
 
 // Helper function to find object ID by name
-export function getObjectIdByName(name: string): number | undefined {
+export function getObjectIdByName(name: string): number {
   const entry = Object.entries(ObjectTypes).find(
     ([_, obj]) => obj.name === name
   );
-  return entry ? Number(entry[0]) : undefined;
+  return Number(entry![0]);
 }

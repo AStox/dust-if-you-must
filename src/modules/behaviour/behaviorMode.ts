@@ -12,17 +12,17 @@ export interface IBehaviorMode {
 
   /**
    * Assess the current game state and determine if this mode is available/viable
-   * @param bot - The bot instance
+   * @param state - The current bot state
    * @returns Promise<boolean> - true if this mode can operate in current conditions
    */
-  isAvailable(bot: DustBot): Promise<boolean>;
+  isAvailable(state: BotState): Promise<boolean>;
 
   /**
    * Assess the current state relevant to this behavior mode
    * @param bot - The bot instance
    * @returns Promise<BotState> - Current state assessment
    */
-  assessState(bot: DustBot): Promise<BotState>;
+  assessState(bot: DustBot): Promise<Partial<BotState>>;
 
   /**
    * Select the best action for this behavior mode given the current state
@@ -60,8 +60,8 @@ export abstract class BaseBehaviorMode implements IBehaviorMode {
   protected abstract actions: UtilityAction[];
   protected abstract priority: number;
 
-  abstract isAvailable(bot: DustBot): Promise<boolean>;
-  abstract assessState(bot: DustBot): Promise<BotState>;
+  abstract isAvailable(state: BotState): Promise<boolean>;
+  abstract assessState(bot: DustBot): Promise<Partial<BotState>>;
 
   async selectAction(state: BotState): Promise<UtilityAction> {
     // Calculate scores for all actions

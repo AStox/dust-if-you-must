@@ -88,16 +88,6 @@ export class DustBot {
   async getPlayerEnergy(): Promise<string> {
     return await this.player.getPlayerEnergy();
   }
-
-  // Check player status with comprehensive information
-  async checkPlayerStatus(action: string): Promise<{
-    position: Vec3 | null;
-    energy: string;
-    isDead: boolean;
-    isSleeping: boolean;
-  }> {
-    return await this.player.checkPlayerStatus(this, action);
-  }
 }
 
 // Main execution function for direct script usage

@@ -93,3 +93,7 @@ export function distance(from: Vec3, to: Vec3): number {
   const dz = to.z - from.z;
   return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }
+
+export function getItemCount(itemId: number, inventory: { type: number; amount: number }[]): number {
+  return inventory.filter((item) => item.type === itemId).reduce((acc, item) => acc + item.amount, 0);
+}

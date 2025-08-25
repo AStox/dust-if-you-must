@@ -9,7 +9,7 @@ const config: ProcedureConfig = {
 };
 
 console.log("🚨 Starting SURVIVAL procedure");
-runProcedure(config).catch((error) => {
+runProcedure(config).catch((error: any) => {
   console.error("💥 Fatal error in survival procedure:", error);
   process.exit(1);
 });

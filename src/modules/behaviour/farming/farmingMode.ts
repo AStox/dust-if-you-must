@@ -17,13 +17,14 @@ import {
   seedFarmPlots,
   harvestFarmPlots,
   growSeededFarmPlots,
-  transferToFromChest,
 } from "./farmingOperations.js";
 import { getOperationalConfig } from "../../../config/loader.js";
 import {
   InventoryManager,
   InventoryManagementConfig,
 } from "../shared/inventoryManager.js";
+import { distance, getItemCount } from "../../../utils.js";
+import { get } from "http";
 
 // Farming-specific constants
 export const MAX_ENERGY: number = 817600000000000000;
@@ -96,40 +97,15 @@ export function getFarmingInventoryConfig(): InventoryManagementConfig {
   };
 }
 
-// Legacy exports for backward compatibility (deprecated)
-/** @deprecated Use getFarmingAreas().coastPosition instead */
-export const coastPosition: Vec3 = { x: -443, y: 63, z: 489 };
-/** @deprecated Use getFarmingAreas().waterPosition instead */
-export const waterPosition: Vec3 = { x: -444, y: 62, z: 489 };
-/** @deprecated Use getFarmingAreas().farmCenter instead */
-export const farmCenter: Vec3 = { x: -401, y: 72, z: 483 }; // Also chest position
-/** @deprecated Use getFarmingAreas().housePosition instead */
-export const housePosition: Vec3 = { x: -401, y: 72, z: 489 };
-/** @deprecated Use getFarmingAreas().farmCorner1 instead */
-export const farmCorner1: Vec3 = { x: -405, y: 72, z: 479 };
-/** @deprecated Use getFarmingAreas().farmCorner2 instead */
-export const farmCorner2: Vec3 = { x: -398, y: 72, z: 486 };
-/** @deprecated Use getFarmingParameters().locationThreshold instead */
-export const LOCATION_THRESHOLD = 1; // blocks
-
-// Utility Functions
-function calculateDistance(pos1: Vec3, pos2: Vec3): number {
-  return Math.sqrt(
-    Math.pow(pos1.x - pos2.x, 2) +
-      Math.pow(pos1.y - pos2.y, 2) +
-      Math.pow(pos1.z - pos2.z, 2)
-  );
-}
-
 function determineFarmingLocation(
   position: Vec3
 ): "coast" | "house" | "farm" | "unknown" {
   const areas = getFarmingAreas();
   const params = getFarmingParameters();
 
-  const distanceToCoast = calculateDistance(position, areas.coastPosition);
-  const distanceToHouse = calculateDistance(position, areas.housePosition);
-  const distanceToFarm = calculateDistance(position, areas.farmCenter);
+  const distanceToCoast = distance(position, areas.coastPosition);
+  const distanceToHouse = distance(position, areas.housePosition);
+  const distanceToFarm = distance(position, areas.farmCenter);
 
   const distances = [
     { location: "coast" as const, distance: distanceToCoast },
@@ -160,9 +136,18 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "FILL_BUCKETS",
       canExecute: (state) => {
-        const atCoast = state.location === "coast";
-        const hasEmptyBuckets = state.emptyBuckets > 0;
-        return atCoast && hasEmptyBuckets;
+        const location = determineFarmingLocation(state.position);
+        const atCoast = location === "coast";
+        const emptyBucketCount = getItemCount(getObjectIdByName("Bucket"), state.inventory);
+        const hasEmptyBuckets = emptyBucketCount > 0;
+        
+        const canExecute = atCoast && hasEmptyBuckets;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`FILL_BUCKETS: location=${location}, atCoast=${atCoast}, emptyBuckets=${emptyBucketCount}, hasEmptyBuckets=${hasEmptyBuckets} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
       },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
@@ -173,40 +158,76 @@ export class FarmingMode extends BaseBehaviorMode {
 
     {
       name: "WATER_PLOTS",
-      canExecute: (state) =>
-        state.location === "farm" &&
-        state.waterBuckets > 0 &&
-        state.unwateredPlots > 0,
+      canExecute: (state) => {
+        const location = determineFarmingLocation(state.position);
+        const atFarm = location === "farm";
+        const bucketCount = getItemCount(getObjectIdByName("WaterBucket"), state.inventory);
+        const hasBuckets = bucketCount > 0;
+        const unwateredPlots = state.unwateredPlots || 0;
+        const hasUnwateredPlots = unwateredPlots > 0;
+        
+        const canExecute = atFarm && hasBuckets && hasUnwateredPlots;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`WATER_PLOTS: location=${location}, atFarm=${atFarm}, WaterBuckets=${bucketCount}, hasBuckets=${hasBuckets}, unwateredPlots=${unwateredPlots}, hasUnwateredPlots=${hasUnwateredPlots} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
+      },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         return 9996; // High priority when at farm with water and unwatered plots
       },
       execute: async (bot, state) => {
         const farmPlots = await generateFarmPlots();
-        await waterFarmPlots(bot, farmPlots, state.waterBuckets);
+        await waterFarmPlots(bot, farmPlots, state!.waterBuckets);
       },
     },
 
     {
       name: "SEED_PLOTS",
-      canExecute: (state) =>
-        state.location === "farm" &&
-        state.unseededPlots > 0 &&
-        state.wheatSeeds > 0,
+      canExecute: (state) => {
+        const location = determineFarmingLocation(state.position);
+        const atFarm = location === "farm";
+        const unseededPlots = state.unseededPlots || 0;
+        const hasUnseededPlots = unseededPlots > 0;
+        const seedCount = getItemCount(getObjectIdByName("WheatSeed"), state.inventory);
+        const hasSeeds = seedCount > 0;
+        
+        const canExecute = atFarm && hasUnseededPlots && hasSeeds;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`SEED_PLOTS: location=${location}, atFarm=${atFarm}, unseededPlots=${unseededPlots}, hasUnseededPlots=${hasUnseededPlots}, seeds=${seedCount}, hasSeeds=${hasSeeds} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
+      },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         return 9997; // High priority when at farm with seeds and unseeded plots
       },
       execute: async (bot, state) => {
         const farmPlots = await generateFarmPlots();
-        await seedFarmPlots(bot, farmPlots, state.wheatSeeds, state.inventory);
+        await seedFarmPlots(bot, farmPlots, state!.inventory);
       },
     },
 
     {
       name: "GROW_SEEDED_PLOTS",
-      canExecute: (state) =>
-        state.location === "farm" && state.ungrownPlots > 0,
+      canExecute: (state) => {
+        const location = determineFarmingLocation(state.position);
+        const atFarm = location === "farm";
+        const ungrownPlots = state.ungrownPlots || 0;
+        const hasUngrownPlots = ungrownPlots > 0;
+        
+        const canExecute = atFarm && hasUngrownPlots;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`GROW_SEEDED_PLOTS: location=${location}, atFarm=${atFarm}, ungrownPlots=${ungrownPlots}, hasUngrownPlots=${hasUngrownPlots} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
+      },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         return 9998; // High priority for growing
@@ -219,8 +240,20 @@ export class FarmingMode extends BaseBehaviorMode {
 
     {
       name: "HARVEST_PLOTS",
-      canExecute: (state) =>
-        state.location === "farm" && state.unharvestedPlots > 0,
+      canExecute: (state) => {
+        const location = determineFarmingLocation(state.position);
+        const atFarm = location === "farm";
+        const unharvestedPlots = state.unharvestedPlots || 0;
+        const hasUnharvestedPlots = unharvestedPlots > 0;
+        
+        const canExecute = atFarm && hasUnharvestedPlots;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`HARVEST_PLOTS: location=${location}, atFarm=${atFarm}, unharvestedPlots=${unharvestedPlots}, hasUnharvestedPlots=${hasUnharvestedPlots} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
+      },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         return 9999; // Highest priority - harvest when ready
@@ -234,7 +267,15 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "MANAGE_INVENTORY",
       canExecute: (state) => {
-        if (state.location !== "farm") return false;
+        const location = determineFarmingLocation(state.position);
+        const atFarm = location === "farm";
+        
+        if (!atFarm) {
+          if (typeof global !== 'undefined' && global.debugLog) {
+            global.debugLog(`MANAGE_INVENTORY: location=${location}, atFarm=${atFarm} → canExecute=false`);
+          }
+          return false;
+        }
 
         const params = getFarmingParameters();
         const bucketId = getObjectIdByName("Bucket")!;
@@ -251,38 +292,37 @@ export class FarmingMode extends BaseBehaviorMode {
           0, // Empty slots
         ]);
 
-        const hasNonFarmingItems = state.inventory.some(
+        const nonFarmingItems = state.inventory.filter(
           (item) => !allowedItems.has(item.type) && item.amount > 0
         );
+        const hasNonFarmingItems = nonFarmingItems.length > 0;
 
         // Check if we need items from chest
-        const bucketsInChest = state.chestInventory
-          .filter(
-            (item) => item.type === bucketId || item.type === waterBucketId
-          )
-          .reduce((acc, item) => acc + item.amount, 0);
-        const seedsInChest = state.chestInventory
-          .filter((item) => item.type === wheatSeedId)
-          .reduce((acc, item) => acc + item.amount, 0);
-        const wheatInChest = state.chestInventory
-          .filter((item) => item.type === wheatId)
-          .reduce((acc, item) => acc + item.amount, 0);
+        const bucketsInChest = getItemCount(bucketId, state.chestInventory);
+        const waterBucketsInChest = getItemCount(waterBucketId, state.chestInventory);
+        const seedsInChest = getItemCount(wheatSeedId, state.chestInventory);
+        const wheatInChest = getItemCount(wheatId, state.chestInventory);
 
+        const currentBuckets = getItemCount(bucketId, state.inventory) + getItemCount(waterBucketId, state.inventory);
         const needBuckets =
-          state.emptyBuckets + state.waterBuckets < params.targetBuckets &&
-          bucketsInChest > 0;
+          currentBuckets < params.targetBuckets &&
+          (bucketsInChest + waterBucketsInChest) > 0;
+        const currentSeedsInInventory = getItemCount(wheatSeedId, state.inventory);
         const needSeeds =
-          state.wheatSeeds < params.targetSeeds && seedsInChest > 0;
+          currentSeedsInInventory < params.targetSeeds && seedsInChest > 0;
+        const currentWheatInInventory = getItemCount(wheatId, state.inventory);
         const needWheat =
-          state.wheat < params.targetWheat && wheatInChest >= 16;
-        const hasSlop = state.slop > 0;
+          currentWheatInInventory < params.targetWheat && wheatInChest >= 16;
 
         const shouldManage =
           hasNonFarmingItems ||
           needBuckets ||
           needSeeds ||
-          needWheat ||
-          hasSlop;
+          needWheat;
+
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`MANAGE_INVENTORY: location=${location}, atFarm=${atFarm}, hasNonFarmingItems=${hasNonFarmingItems} (${nonFarmingItems.length} items), currentBuckets=${currentBuckets}/${params.targetBuckets}, needBuckets=${needBuckets} (chest: ${bucketsInChest + waterBucketsInChest}), currentSeeds=${currentSeedsInInventory}/${params.targetSeeds}, needSeeds=${needSeeds} (chest: ${seedsInChest}), currentWheat=${currentWheatInInventory}/${params.targetWheat}, needWheat=${needWheat} (chest: ${wheatInChest}) → canExecute=${shouldManage}`);
+        }
 
         return shouldManage;
       },
@@ -293,8 +333,8 @@ export class FarmingMode extends BaseBehaviorMode {
         let score = 5000;
 
         // Higher priority if we have slop (cleanup)
-        if (state.slop > 0) {
-          score += state.slop * 100;
+        if (getItemCount(getObjectIdByName("WheatSlop"), state.inventory) > 0) {
+          score += 1000;
         }
 
         return score;
@@ -307,19 +347,21 @@ export class FarmingMode extends BaseBehaviorMode {
 
     {
       name: "CRAFT_SLOP",
-      canExecute: (state) => state.wheat >= 16, // Need exactly 16 wheat for slop recipe
+      canExecute: (state) => {
+        const wheatCount = getItemCount(getObjectIdByName("Wheat"), state.inventory);
+        const hasEnoughWheat = wheatCount >= 16;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`CRAFT_SLOP: wheatCount=${wheatCount}, hasEnoughWheat=${hasEnoughWheat} (need >= 16) → canExecute=${hasEnoughWheat}`);
+        }
+        
+        return hasEnoughWheat;
+      },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         return 9999; // High priority when have enough wheat
       },
       execute: async (bot, state) => {
-        if (state.wheat < 16) {
-          console.log(
-            `⚠️ Not enough wheat to craft slop (have ${state.wheat}, need 16)`
-          );
-          return;
-        }
-
         const wheatSlot = await bot.inventory.getSlotForItemType(
           getObjectIdByName("Wheat")!
         );
@@ -332,39 +374,58 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "MOVE_TO_COAST",
       canExecute: (state) => {
-        const notAtCoast = state.location !== "coast";
-        const hasEmptyBuckets = state.emptyBuckets > 0;
-        return notAtCoast && hasEmptyBuckets;
+        const location = determineFarmingLocation(state.position);
+        const notAtCoast = location !== "coast";
+        const emptyBucketCount = getItemCount(getObjectIdByName("Bucket"), state.inventory);
+        const hasEmptyBuckets = emptyBucketCount > 0;
+        
+        const canExecute = notAtCoast && hasEmptyBuckets;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`MOVE_TO_COAST: location=${location}, notAtCoast=${notAtCoast}, emptyBuckets=${emptyBucketCount}, hasEmptyBuckets=${hasEmptyBuckets} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
       },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         let score = 15;
         const areas = getFarmingAreas();
-        const distanceFromCoast = calculateDistance(
+        const distanceFromCoast = distance(
           state.position,
           areas.coastPosition
         );
-        score -= distanceFromCoast * 0.1; // Prefer shorter trips
 
         // Higher priority if we're out of water entirely
-        if (state.waterBuckets === 0 && state.unwateredPlots > 0) score += 20;
+        if (getItemCount(getObjectIdByName("Bucket"), state.inventory) === 0 && state.unwateredPlots > 0) score += 20;
         return score;
       },
       execute: async (bot, state) => {
-        await walkToHouse(bot);
-        await walkToCoast(bot);
+        const areas = getFarmingAreas();
+        await bot.movement.pathTo(areas.coastPosition);
       },
     },
 
     {
       name: "MOVE_TO_FARM",
-      canExecute: (state) =>
-        state.location !== "farm" && state.waterBuckets > 0,
+      canExecute: (state) => {
+        const notAtFarm = determineFarmingLocation(state.position) !== "farm";
+        const waterBuckets = getItemCount(getObjectIdByName("WaterBucket"), state.inventory);
+        const hasWaterBuckets = waterBuckets > 0;
+        
+        const canExecute = notAtFarm && hasWaterBuckets;
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`MOVE_TO_FARM: location=${determineFarmingLocation(state.position)}, notAtFarm=${notAtFarm}, waterBuckets=${waterBuckets}, hasWaterBuckets=${hasWaterBuckets} → canExecute=${canExecute}`);
+        }
+        
+        return canExecute;
+      },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         let score = 0;
         const areas = getFarmingAreas();
-        const distanceFromFarm = calculateDistance(
+        const distanceFromFarm = distance(
           state.position,
           areas.farmCenter
         );
@@ -380,7 +441,13 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "GET_TO_KNOWN_LOCATION",
       canExecute: (state) => {
-        const isUnknownLocation = state.location === "unknown";
+        const location = determineFarmingLocation(state.position);
+        const isUnknownLocation = location === "unknown";
+        
+        if (typeof global !== 'undefined' && global.debugLog) {
+          global.debugLog(`GET_TO_KNOWN_LOCATION: location=${location}, isUnknownLocation=${isUnknownLocation} → canExecute=${isUnknownLocation}`);
+        }
+        
         return isUnknownLocation;
       },
       calculateScore: function (state) {
@@ -394,6 +461,7 @@ export class FarmingMode extends BaseBehaviorMode {
         );
 
         try {
+          console.log("🔄 Starting pathfinding to farm center");
           await bot.movement.pathTo({
             x: areas.farmCenter.x,
             y: areas.farmCenter.y,
@@ -408,12 +476,9 @@ export class FarmingMode extends BaseBehaviorMode {
     },
   ];
 
-  async isAvailable(bot: DustBot): Promise<boolean> {
+  async isAvailable(state: BotState): Promise<boolean> {
     // Clear cache for fresh evaluation
     this.actionExecutionCache.clear();
-    
-    // Get current state
-    const state = await this.assessState(bot);
     
     // Check if any action can execute and cache the results
     const executableActions = [];
@@ -425,16 +490,18 @@ export class FarmingMode extends BaseBehaviorMode {
       }
     }
     
-    const available = executableActions.length > 0;
+    // Filter out MANAGE_INVENTORY for availability check - it's always available but not real work
+    const productiveActions = executableActions.filter(name => name !== "MANAGE_INVENTORY");
+    const available = productiveActions.length > 0;
     
     console.log(
-      `🔍 FARMING isAvailable: executableActions=[${executableActions.join(', ')}] → ${available}`
+      `${available? '✅' : '❌'} FARMING: executableActions=[${executableActions.join(', ')}], productive=[${productiveActions.join(', ')}]`
     );
 
     return available;
   }
 
-  // Override selectAction to use cached results
+  // Override selectAction to use cached results and prioritize non-inventory actions
   async selectAction(state: BotState): Promise<UtilityAction> {
     // If cache is empty, rebuild it
     if (this.actionExecutionCache.size === 0) {
@@ -455,8 +522,17 @@ export class FarmingMode extends BaseBehaviorMode {
       return super.selectAction(state);
     }
 
-    // Calculate scores for executable actions
-    const scoredActions = executableActions.map(action => ({
+    // Prioritize non-inventory actions - if any are available, exclude MANAGE_INVENTORY
+    const nonInventoryActions = executableActions.filter(action => action.name !== "MANAGE_INVENTORY");
+    const actionsToScore = nonInventoryActions.length > 0 ? nonInventoryActions : executableActions;
+
+    console.log(`📋 Considering ${actionsToScore.length} actions: [${actionsToScore.map(a => a.name).join(', ')}]`);
+    if (nonInventoryActions.length > 0 && executableActions.length > nonInventoryActions.length) {
+      console.log(`🎯 Prioritizing non-inventory actions (found ${nonInventoryActions.length})`);
+    }
+
+    // Calculate scores for selected actions
+    const scoredActions = actionsToScore.map(action => ({
       action,
       score: action.calculateScore(state)
     }));
@@ -464,7 +540,6 @@ export class FarmingMode extends BaseBehaviorMode {
     // Sort by score descending
     scoredActions.sort((a, b) => b.score - a.score);
 
-    console.log("\n🎯 FARMING Action Selection:");
     for (const { action, score } of scoredActions.slice(0, 3)) {
       console.log(`  ${action.name}: ${score}`);
     }
@@ -472,87 +547,10 @@ export class FarmingMode extends BaseBehaviorMode {
     return scoredActions[0].action;
   }
 
-  async assessState(bot: DustBot): Promise<BotState> {
-    console.log("\n🔍 === FARMING STATE ASSESSMENT ===");
-
-    const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
-    );
-    const energy = Number(await bot.player.getPlayerEnergy());
-    const position = await bot.player.getCurrentPosition();
-
-    const bucketId = getObjectIdByName("Bucket");
-    const waterBucketId = getObjectIdByName("WaterBucket");
-    const wheatSeedId = getObjectIdByName("WheatSeed");
-    const wheatId = getObjectIdByName("Wheat");
-    const slopId = getObjectIdByName("WheatSlop");
-
-    const emptyBuckets = inventory.filter(
-      (item) => item.type === bucketId
-    ).length;
-
-    const waterBuckets = inventory.filter(
-      (item) => item.type === waterBucketId
-    ).length;
-
-    const wheatSeeds = inventory
-      .filter((item) => item.type === wheatSeedId)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const wheat = inventory
-      .filter((item) => item.type === wheatId)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const slop = inventory
-      .filter((item) => item.type === slopId)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    console.log("\n📊 Parsed inventory counts:");
-    console.log(`  Empty Buckets: ${emptyBuckets}`);
-    console.log(`  Water Buckets: ${waterBuckets}`);
-    console.log(`  Wheat Seeds: ${wheatSeeds}`);
-    console.log(`  Wheat: ${wheat}`);
-    console.log(`  Slop: ${slop}`);
-
-    console.log("\n📍 Position and location:");
-    console.log(
-      `  Raw position: (${position.x}, ${position.y}, ${position.z})`
-    );
-    const location = determineFarmingLocation(position);
-    console.log(`  Determined location: ${location}`);
-
-    console.log("\n🚰 Energy status:");
-    console.log(
-      `  Energy: ${energy} (${((energy / MAX_ENERGY) * 100).toFixed(1)}%)`
-    );
-
-    // Fetch chest inventory for better action decisions
-    console.log("\n📦 Checking chest inventory...");
-    const entityIds = getEntityIds();
-    const chestInventory = await bot.inventory.getInventory(
-      entityIds.rightChestEntityId
-    );
-
-    const bucketsInChest = chestInventory
-      .filter((item) => item.type === bucketId || item.type === waterBucketId)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const seedsInChest = chestInventory
-      .filter((item) => item.type === wheatSeedId)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    const wheatInChest = chestInventory
-      .filter((item) => item.type === wheatId)
-      .reduce((acc, item) => acc + item.amount, 0);
-
-    console.log(`  Chest buckets: ${bucketsInChest}`);
-    console.log(`  Chest seeds: ${seedsInChest}`);
-    console.log(`  Chest wheat: ${wheatInChest}`);
+  async assessState(bot: DustBot): Promise<Partial<BotState>> {
 
     // Generate farm plots to count unwatered
-    console.log("\n🌾 Analyzing farm plots...");
     const farmPlots = await generateFarmPlots();
-    console.log(`  Total farm plots to check: ${farmPlots.length}`);
 
     let unwateredPlots = 0;
     let unseededPlots = 0;
@@ -567,6 +565,7 @@ export class FarmingMode extends BaseBehaviorMode {
           y: plot.y + 1,
           z: plot.z,
         });
+
 
         const result = {
           unwatered: false,
@@ -607,53 +606,14 @@ export class FarmingMode extends BaseBehaviorMode {
       if (analysis.unharvested) unharvestedPlots++;
     }
 
-    console.log("\n🏡 Farm plot analysis:");
-    console.log(`  Unwatered plots: ${unwateredPlots}/${farmPlots.length}`);
-    console.log(`  Unseeded plots: ${unseededPlots}/${farmPlots.length}`);
-    console.log(`  Ungrown plots: ${ungrownPlots}/${farmPlots.length}`);
-    console.log(`  Unharvested plots: ${unharvestedPlots}/${farmPlots.length}`);
-
     const state = {
-      location: location as "coast" | "house" | "farm" | "unknown",
-      position,
-      energy,
-      emptyBuckets,
-      waterBuckets,
-      wheatSeeds,
-      wheat,
-      slop,
       unwateredPlots,
       unseededPlots,
       ungrownPlots,
       unharvestedPlots,
       totalPlots: farmPlots.length,
-      inventory,
-      chestInventory,
     };
 
-    console.log("\n✅ State assessment complete");
     return state;
   }
-}
-
-export async function logFarmingState(state: BotState): Promise<void> {
-  console.log("\n📊 Farming Mode State:");
-  console.log(`  Location: ${state.location}`);
-  console.log(
-    `  Position: (${state.position.x}, ${state.position.y}, ${state.position.z})`
-  );
-  console.log(
-    `  Energy: ${state.energy} (${(state.energy / MAX_ENERGY) * 100}%)`
-  );
-  console.log(`  Empty Buckets: ${state.emptyBuckets}`);
-  console.log(`  Water Buckets: ${state.waterBuckets}`);
-  console.log(`  Wheat: ${state.wheat}`);
-  console.log(`  Slop: ${state.slop}`);
-  console.log(`  Wheat Seeds: ${state.wheatSeeds}`);
-  console.log(`  Unwatered Plots: ${state.unwateredPlots}/${state.totalPlots}`);
-  console.log(`  Unseeded Plots: ${state.unseededPlots}/${state.totalPlots}`);
-  console.log(`  Ungrown Plots: ${state.ungrownPlots}/${state.totalPlots}`);
-  console.log(
-    `  Unharvested Plots: ${state.unharvestedPlots}/${state.totalPlots}`
-  );
 }

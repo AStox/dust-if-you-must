@@ -2,7 +2,7 @@ import { getOperationalConfig } from "../../../config/loader.js";
 import { DustBot } from "../../../index.js";
 import { getObjectIdByName, ObjectTypes } from "../../../types/objectTypes.js";
 import { Vec3 } from "../../../types/base.js";
-import { packVec3 } from "../../../utils.js";
+import { distance, packVec3 } from "../../../utils.js";
 import { InventoryManagementConfig } from "../shared/inventoryManager.js";
 
 // Constants
@@ -23,7 +23,7 @@ export const SAPLING_TYPES = [
 
 export const AXE_TYPES = [
   "WoodenAxe",
-  "StoneAxe",
+  "CopperAxe",
   "IronAxe",
   "DiamondAxe",
 ] as const;
@@ -37,15 +37,6 @@ export const EXCLUDED_ITEM_TYPES = [
   "SpruceLeaf",
   "Battery",
 ] as const;
-
-// Utility Functions
-export function calculateDistance(pos1: Vec3, pos2: Vec3): number {
-  return Math.sqrt(
-    Math.pow(pos1.x - pos2.x, 2) +
-      Math.pow(pos1.y - pos2.y, 2) +
-      Math.pow(pos1.z - pos2.z, 2)
-  );
-}
 
 export function isInTreeFarm(position: Vec3): boolean {
   const config = getOperationalConfig();
@@ -77,10 +68,56 @@ export function isInTreeFarm(position: Vec3): boolean {
   }
 }
 
+// Inventory utility functions
+function hasItemOfTypes(inventory: any[], typeIds: number[]): boolean {
+  return inventory.some((item) => typeIds.includes(item.type));
+}
+
+function findItemSlot(inventory: any[], typeId: number): number {
+  return inventory.findIndex((item) => item.type === typeId && item.amount > 0);
+}
+
+function getItemsByTypes(inventory: any[], typeIds: number[]): any[] {
+  return inventory.filter((item) => typeIds.includes(item.type) && item.amount > 0);
+}
+
+function countItemsByTypes(inventory: any[], typeIds: number[]): number {
+  return getItemsByTypes(inventory, typeIds).reduce((total, item) => total + item.amount, 0);
+}
+
+// Position and distance utility functions
+function findClosestPosition(playerPos: Vec3, positions: Vec3[]): { position: Vec3; distance: number } | null {
+  if (positions.length === 0) return null;
+  
+  let closestPos = positions[0];
+  let closestDistance = distance(playerPos, closestPos);
+
+  for (const pos of positions) {
+    const dist = distance(playerPos, pos);
+    if (dist < closestDistance) {
+      closestPos = pos;
+      closestDistance = dist;
+    }
+  }
+
+  return { position: closestPos, distance: closestDistance };
+}
+
+function getPositionsWithinReach(playerPos: Vec3, positions: Vec3[], maxReach: number): Vec3[] {
+  return positions.filter(pos => distance(playerPos, pos) <= maxReach);
+}
+
+
+
 export function hasAxe(inventory: any[]): boolean {
-  return inventory.some((item) =>
-    AXE_TYPES.some((axeType) => item.type === getObjectIdByName(axeType))
-  );
+  return hasItemOfTypes(inventory, getAxeTypeIds());
+}
+
+// Utility functions for type conversion
+function convertTypesToIds(types: readonly string[]): number[] {
+  return types.map((type) => getObjectIdByName(type)).filter(
+    (id) => id !== undefined
+  ) as number[];
 }
 
 export function getTreeBlockTypeIds(): number[] {
@@ -97,6 +134,12 @@ export function getAxeTypeIds(): number[] {
 
 export function getExcludedItemTypeIds(): number[] {
   return EXCLUDED_ITEM_TYPES.map((type) => getObjectIdByName(type)).filter(
+    (id) => id !== undefined
+  ) as number[];
+}
+
+export function getSaplingTypeIds(): number[] {
+  return SAPLING_TYPES.map((type) => getObjectIdByName(type)).filter(
     (id) => id !== undefined
   ) as number[];
 }
@@ -126,24 +169,18 @@ export function getBestAxeSlot(inventory: any[]): number | null {
   const axePriority = [
     getObjectIdByName("DiamondAxe"),
     getObjectIdByName("IronAxe"),
-    getObjectIdByName("StoneAxe"),
+    getObjectIdByName("CopperAxe"),
     getObjectIdByName("WoodenAxe"),
-  ].filter((id) => id !== undefined);
+  ].filter((id) => id !== undefined) as number[];
 
   for (const axeId of axePriority) {
-    const slot = inventory.findIndex(
-      (item) => item.type === axeId && item.amount > 0
-    );
+    const slot = findItemSlot(inventory, axeId);
     if (slot !== -1) return slot;
   }
   return null;
 }
 
-export function getSaplingTypeIds(): number[] {
-  return SAPLING_TYPES.map((type) => getObjectIdByName(type)).filter(
-    (id) => id !== undefined
-  ) as number[];
-}
+
 
 async function findAdjacentPassthroughPosition(
   bot: DustBot,
@@ -191,12 +228,8 @@ async function scanTreeFarmBlocks(
 ): Promise<Vec3[]> {
   const corner1 = bounds.corner1;
   const corner2 = bounds.corner2;
-  console.log(
-    `🔍 Scanning tree farm blocks from (${corner1.x},${corner1.z}) to (${corner2.x},${corner2.z})`
-  );
 
   // Get ground level at corners and find the lowest
-  console.log("🔍 Getting ground levels...");
   const start = Date.now();
   const groundLevel1 = await bot.world.getGroundLevel(
     corner1.x,
@@ -210,7 +243,6 @@ async function scanTreeFarmBlocks(
   );
   const minGroundLevel = Math.min(groundLevel1, groundLevel2);
   const end = Date.now();
-  console.log(`🔍 getGroundLevels took ${end - start}ms`);
 
   const minX = Math.min(corner1.x, corner2.x);
   const maxX = Math.max(corner1.x, corner2.x);
@@ -223,8 +255,6 @@ async function scanTreeFarmBlocks(
   const saplingTypeIds = getSaplingTypeIds();
   const foundBlocks: Vec3[] = [];
 
-  console.log("🔍 Building positions array...");
-  const start3 = Date.now();
   // Build positions array
   const positions: Vec3[] = [];
   for (let x = minX; x <= maxX; x++) {
@@ -234,11 +264,6 @@ async function scanTreeFarmBlocks(
       }
     }
   }
-  const end3 = Date.now();
-  console.log(`🔍 buildPositions took ${end3 - start3}ms`);
-
-  console.log("🔍 Scanning in chunks of 100...");
-  const start4 = Date.now();
 
   if (earlyExit) {
     // Sequential for early exit
@@ -285,15 +310,6 @@ async function scanTreeFarmBlocks(
         for (let j = 0; j < chunk.length; j++) {
           const blockType = chunkBlockTypes[j];
           
-          // Debug specific position
-          if (chunk[j].x === -405 && chunk[j].y === 78 && chunk[j].z === 456) {
-            console.log(`🐛 DEBUG: Block at (-405,78,456) has type: ${blockType} (null=${blockType === null})`);
-            console.log(`🐛 DEBUG: Tree block types: ${treeBlockTypeIds}`);
-            console.log(`🐛 DEBUG: Sapling types: ${saplingTypeIds}`);
-            console.log(`🐛 DEBUG: Is tree block: ${blockType && treeBlockTypeIds.includes(blockType)}`);
-            console.log(`🐛 DEBUG: Is sapling: ${blockType && saplingTypeIds.includes(blockType)}`);
-          }
-          
           if (blockType && treeBlockTypeIds.includes(blockType)) {
             chunkFoundBlocks.push(chunk[j]);
           } else if (blockType && saplingTypeIds.includes(blockType)) {
@@ -316,8 +332,6 @@ async function scanTreeFarmBlocks(
     foundBlocks.push(...chunkResults.flat());
   }
 
-  const end4 = Date.now();
-  console.log(`🔍 scanInChunks took ${end4 - start4}ms`);
   return foundBlocks;
 }
 
@@ -340,18 +354,18 @@ export async function mineTreeFarmChunk(
     return false;
   }
 
-  // Get player position
-  const playerPos = await bot.player.getCurrentPosition();
+  // Use pre-fetched position from bot.state
+  const playerPos = bot.state.position;
 
   // Find closest block
   let closestBlock = remainingBlocks[0];
-  let closestDistance = calculateDistance(playerPos, closestBlock);
+  let closestDistance = distance(playerPos, closestBlock);
 
   for (const block of remainingBlocks) {
-    const distance = calculateDistance(playerPos, block);
-    if (distance < closestDistance) {
+    const dist = distance(playerPos, block);
+    if (dist < closestDistance) {
       closestBlock = block;
-      closestDistance = distance;
+      closestDistance = dist;
     }
   }
 
@@ -376,9 +390,9 @@ export async function mineTreeFarmChunk(
 
   // Mine all blocks within 10 block radius
   const MAX_INTERACTION_DISTANCE = 10;
-  const currentPos = await bot.player.getCurrentPosition();
+  const currentPos = bot.state.position;
   const blocksToMine = remainingBlocks.filter(
-    (block) => calculateDistance(currentPos, block) <= MAX_INTERACTION_DISTANCE
+    (block) => distance(currentPos, block) <= MAX_INTERACTION_DISTANCE
   );
 
   console.log(`⛏️ Mining ${blocksToMine.length} blocks within reach`);
@@ -463,18 +477,18 @@ export async function mineTreeFarmVolume(bot: DustBot): Promise<void> {
     return;
   }
 
-  // Get player position
-  const playerPos = await bot.player.getCurrentPosition();
+  // Use pre-fetched position
+  const playerPos = bot.state.position;
 
   // Find closest block
   let closestBlock = remainingBlocks[0];
-  let closestDistance = calculateDistance(playerPos, closestBlock);
+  let closestDistance = distance(playerPos, closestBlock);
 
   for (const block of remainingBlocks) {
-    const distance = calculateDistance(playerPos, block);
-    if (distance < closestDistance) {
+    const dist = distance(playerPos, block);
+    if (dist < closestDistance) {
       closestBlock = block;
-      closestDistance = distance;
+      closestDistance = dist;
     }
   }
 
@@ -499,9 +513,9 @@ export async function mineTreeFarmVolume(bot: DustBot): Promise<void> {
 
   // Mine all blocks within 10 block radius
   const MAX_INTERACTION_DISTANCE = 10;
-  const currentPos = await bot.player.getCurrentPosition();
+  const currentPos = bot.state.position;
   const blocksToMine = remainingBlocks.filter(
-    (block) => calculateDistance(currentPos, block) <= MAX_INTERACTION_DISTANCE
+    (block) => distance(currentPos, block) <= MAX_INTERACTION_DISTANCE
   );
 
   console.log(`⛏️ Mining ${blocksToMine.length} blocks within reach`);
@@ -603,7 +617,7 @@ export async function setupEnergizeInventory(bot: DustBot): Promise<void> {
 
   const axeTypes = [
     getObjectIdByName("WoodenAxe"),
-    getObjectIdByName("StoneAxe"),
+    getObjectIdByName("CopperAxe"),
     getObjectIdByName("IronAxe"),
     getObjectIdByName("DiamondAxe"),
   ];
@@ -715,7 +729,7 @@ export async function setupEnergizeInventory(bot: DustBot): Promise<void> {
     const axePriority = [
       { name: "DiamondAxe", id: getObjectIdByName("DiamondAxe") },
       { name: "IronAxe", id: getObjectIdByName("IronAxe") },
-      { name: "StoneAxe", id: getObjectIdByName("StoneAxe") },
+      { name: "CopperAxe", id: getObjectIdByName("CopperAxe") },
       { name: "WoodenAxe", id: getObjectIdByName("WoodenAxe") },
     ];
 
@@ -871,26 +885,18 @@ export async function plantSaplings(bot: DustBot): Promise<void> {
 
   while (remainingPositions.length > 0) {
     // Check inventory
-    const saplingSlot = bot.state.inventory.findIndex(
-      (item) => item.type === oakSaplingId && item.amount > 0
-    );
+    const saplingSlot = findItemSlot(bot.state.inventory, oakSaplingId);
     if (saplingSlot === -1) {
       console.log("❌ No more oak saplings in inventory");
       break;
     }
 
     // Find closest position
-    const playerPos = await bot.player.getCurrentPosition();
-    let closestPos = remainingPositions[0];
-    let closestDistance = calculateDistance(playerPos, closestPos);
-
-    for (const pos of remainingPositions) {
-      const distance = calculateDistance(playerPos, pos);
-      if (distance < closestDistance) {
-        closestPos = pos;
-        closestDistance = distance;
-      }
-    }
+    const playerPos = bot.state.position;
+    const closest = findClosestPosition(playerPos, remainingPositions);
+    if (!closest) break;
+    
+    const closestPos = closest.position;
 
     // Move to planting area
     const targetPos = await findAdjacentPassthroughPosition(bot, closestPos);
@@ -909,10 +915,8 @@ export async function plantSaplings(bot: DustBot): Promise<void> {
     });
 
     // Plant at all positions within reach
-    const currentPos = await bot.player.getCurrentPosition();
-    const positionsInReach = remainingPositions.filter(
-      (pos) => calculateDistance(currentPos, pos) <= MAX_REACH
-    );
+    const currentPos = bot.state.position;
+    const positionsInReach = getPositionsWithinReach(currentPos, remainingPositions, MAX_REACH);
 
     console.log(
       `🌱 Planting ${positionsInReach.length} saplings within reach...`
@@ -947,20 +951,11 @@ export async function plantSaplings(bot: DustBot): Promise<void> {
 }
 
 export function hasExcessTreeMaterials(inventory: any[]): boolean {
-  const logTypes = ["OakLog", "BirchLog", "SpruceLog"];
-  const leafTypes = ["OakLeaf", "BirchLeaf", "SpruceLeaf"];
+  const logTypeIds = convertTypesToIds(["OakLog", "BirchLog", "SpruceLog"]);
+  const leafTypeIds = convertTypesToIds(["OakLeaf", "BirchLeaf", "SpruceLeaf"]);
 
-  const logCount = inventory
-    .filter((item) =>
-      logTypes.some((logType) => item.type === getObjectIdByName(logType))
-    )
-    .reduce((total, item) => total + item.amount, 0);
-
-  const leafCount = inventory
-    .filter((item) =>
-      leafTypes.some((leafType) => item.type === getObjectIdByName(leafType))
-    )
-    .reduce((total, item) => total + item.amount, 0);
+  const logCount = countItemsByTypes(inventory, logTypeIds);
+  const leafCount = countItemsByTypes(inventory, leafTypeIds);
 
   return logCount > 5 || leafCount > 90;
 }
@@ -985,19 +980,11 @@ export async function craftBatteriesAtPowerstone(bot: DustBot): Promise<void> {
 
   // Get current inventory to see what we can craft with
   const inventory = bot.state.inventory;
-  const logTypes = ["OakLog", "BirchLog", "SpruceLog"];
-  const leafTypes = ["OakLeaf", "BirchLeaf", "SpruceLeaf"];
+  const logTypeIds = convertTypesToIds(["OakLog", "BirchLog", "SpruceLog"]);
+  const leafTypeIds = convertTypesToIds(["OakLeaf", "BirchLeaf", "SpruceLeaf"]);
 
-  const logs = inventory.filter(
-    (item) =>
-      logTypes.some((logType) => item.type === getObjectIdByName(logType)) &&
-      item.amount > 0
-  );
-  const leaves = inventory.filter(
-    (item) =>
-      leafTypes.some((leafType) => item.type === getObjectIdByName(leafType)) &&
-      item.amount > 0
-  );
+  const logs = getItemsByTypes(inventory, logTypeIds);
+  const leaves = getItemsByTypes(inventory, leafTypeIds);
 
   console.log(
     `📦 Found ${logs.length} log stacks and ${leaves.length} leaf stacks to process`
@@ -1080,11 +1067,9 @@ export async function hasAvailableTreeBlocksInChunk(
   bot: DustBot,
   chunkBounds: { corner1: Vec3; corner2: Vec3 }
 ): Promise<boolean> {
-  console.log("🔍 Checking for tree blocks in chunk...");
   const start = Date.now();
   const foundBlocks = await scanTreeFarmBlocks(bot, chunkBounds, 10, true);
   const end = Date.now();
-  console.log(`🔍 scanTreeFarmBlocks took ${end - start}ms`);
   return foundBlocks.length > 0;
 }
 
@@ -1094,7 +1079,6 @@ export async function hasPlantablePositionsInChunk(
 ): Promise<boolean> {
   const positions = await getPlantablePositionsInChunk(bot, chunkBounds);
   const hasPositions = positions.length > 0;
-  console.log(`🔍 hasPlantablePositionsInChunk: found ${positions.length} positions, returning ${hasPositions}`);
   return hasPositions;
 }
 
@@ -1185,16 +1169,10 @@ export async function plantSaplingsInChunk(
     throw new Error("Oak sapling type not found");
   }
 
-  console.log(`🌱 Creating sapling grid in chunk...`);
-
   // Get plantable positions using the chunk-specific logic
   const plantablePositions = await getPlantablePositionsInChunk(
     bot,
     chunkBounds
-  );
-
-  console.log(
-    `📍 Found ${plantablePositions.length} plantable positions in chunk`
   );
 
   if (plantablePositions.length === 0) {
@@ -1217,15 +1195,15 @@ export async function plantSaplingsInChunk(
     }
 
     // Find closest position
-    const playerPos = await bot.player.getCurrentPosition();
+    const playerPos = bot.state.position;
     let closestPos = remainingPositions[0];
-    let closestDistance = calculateDistance(playerPos, closestPos);
+    let closestDistance = distance(playerPos, closestPos);
 
     for (const pos of remainingPositions) {
-      const distance = calculateDistance(playerPos, pos);
-      if (distance < closestDistance) {
+      const dist = distance(playerPos, pos);
+      if (dist < closestDistance) {
         closestPos = pos;
-        closestDistance = distance;
+        closestDistance = dist;
       }
     }
 
@@ -1246,9 +1224,9 @@ export async function plantSaplingsInChunk(
     });
 
     // Plant at all positions within reach
-    const currentPos = await bot.player.getCurrentPosition();
+    const currentPos = bot.state.position;
     const positionsInReach = remainingPositions.filter(
-      (pos) => calculateDistance(currentPos, pos) <= MAX_REACH
+      (pos) => distance(currentPos, pos) <= MAX_REACH
     );
 
     console.log(

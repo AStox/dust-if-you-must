@@ -3,30 +3,40 @@ import * as dotenv from "dotenv";
 import { DustBot } from "../src/index.js";
 import { executeBehaviorCycle } from "../src/modules/behaviour/decision.js";
 import { loadOperationalConfig } from "../src/config/loader.js";
-import {
-  SurvivalMode,
-  logSurvivalState,
-} from "../src/modules/behaviour/survival/survivalMode.js";
-import {
-  FarmingMode,
-  logFarmingState,
-} from "../src/modules/behaviour/farming/farmingMode.js";
-import {
-  EnergizeMode,
-  logEnergizeState,
-} from "../src/modules/behaviour/energize/energizeMode.js";
+import { SurvivalMode } from "../src/modules/behaviour/survival/survivalMode.js";
+import { FarmingMode } from "../src/modules/behaviour/farming/farmingMode.js";
+import { EnergizeMode } from "../src/modules/behaviour/energize/energizeMode.js";
 
 // Load environment variables
 dotenv.config();
 
+// Parse command line arguments for debug flag
+const args = process.argv.slice(2);
+const isDebugMode = args.includes('--debug');
+
+// Global debug logging function
+global.debugLog = (message: string, ...args: any[]) => {
+  if (isDebugMode) {
+    console.log(`🐛 DEBUG: ${message}`, ...args);
+  }
+};
+
+declare global {
+  var debugLog: (message: string, ...args: any[]) => void;
+}
+
 async function runComprehensiveProcedure() {
+  debugLog("Starting comprehensive procedure", { isDebugMode });
+  
   try {
+    debugLog("Loading operational configuration...");
     await loadOperationalConfig({
       configPath: "./config/operational.json",
       validateSchema: true,
       allowEnvironmentOverrides: true,
       requireEnergizeAreas: true, // Required for energize mode
     });
+    debugLog("Configuration loaded successfully");
   } catch (error) {
     console.error("❌ Failed to load configuration:", error);
     console.error(
@@ -36,16 +46,20 @@ async function runComprehensiveProcedure() {
   }
 
   // Initialize the bot
+  debugLog("Initializing DustBot...");
   const bot = new DustBot();
 
   // Display wallet info
+  debugLog("Getting wallet info...");
   const walletInfo = await bot.getInfo();
+  debugLog("Wallet info retrieved", walletInfo);
 
   // Initial setup logging
   console.log("\n🚀 INITIAL SETUP COMPLETE");
   console.log("=".repeat(60));
 
   // Initialize all behavior modes with proper priority order
+  debugLog("Initializing behavior modes...");
   const survivalMode = new SurvivalMode(); // Priority: 1000 (highest)
   const farmingMode = new FarmingMode(); // Priority: 100 (medium)
   const energizeMode = new EnergizeMode(); // Priority: 80 (low)
@@ -84,52 +98,24 @@ async function runComprehensiveProcedure() {
     try {
       // Check actual player state and take appropriate action every cycle
       console.log("\n🚀 CHECKING & ACTIVATING CHARACTER");
+      debugLog(`Starting cycle ${cycleCount} - character activation`);
       
       // activate character (needed for all modes to handle dead players)
+      debugLog("Activating player character...");
       await bot.player.activate();
 
       // Refresh nonce to ensure it's in sync after activation
+      debugLog("Refreshing nonce...");
       await bot.player.refreshNonce();
 
       // Get the actual player state from game tables
+      debugLog("Checking player status and activating...");
       await bot.player.checkStatusAndActivate(bot);
 
       // Execute behavior cycle with all modes - will automatically select highest priority available mode
+      debugLog("Executing behavior cycle with all modes...");
       await executeBehaviorCycle(bot, allModes);
 
-      // Detailed state logging every 5 cycles
-      if (cycleCount % 5 === 0) {
-        lastDetailedLog = cycleCount;
-        console.log(`\n📈 === Detailed State Report (Cycle ${cycleCount}) ===`);
-
-        // Show survival state (always relevant)
-        const survivalState = await survivalMode.assessState(bot);
-        await logSurvivalState(survivalState);
-
-        // Show farming state if farming mode is available
-        try {
-          if (await farmingMode.isAvailable(bot)) {
-            const farmingState = await farmingMode.assessState(bot);
-            await logFarmingState(farmingState);
-          } else {
-            console.log("\n🌾 Farming mode not currently available");
-          }
-        } catch (error) {
-          console.log("\n⚠️ Could not assess farming state:", error);
-        }
-
-        // Show energize state if energize mode is available
-        try {
-          if (await energizeMode.isAvailable(bot)) {
-            const energizeState = await energizeMode.assessState(bot);
-            await logEnergizeState(energizeState);
-          } else {
-            console.log("\n🔋 Energize mode not currently available");
-          }
-        } catch (error) {
-          console.log("\n⚠️ Could not assess energize state:", error);
-        }
-      }
     } catch (error) {
       console.error(
         `❌ Error in comprehensive behavior cycle ${cycleCount}:`,
@@ -140,10 +126,13 @@ async function runComprehensiveProcedure() {
       if (cycleCount - lastDetailedLog > 10) {
         console.log("\n🔍 === Emergency State Report (After Error) ===");
         try {
+          debugLog("Getting emergency survival state report...");
           const survivalState = await survivalMode.assessState(bot);
-          await logSurvivalState(survivalState);
+          debugLog("Emergency survival state", survivalState);
+          console.log("\n🚨 Emergency Survival State:", JSON.stringify(survivalState, null, 2));
         } catch (debugError) {
           console.log("⚠️ Could not get emergency state report:", debugError);
+          debugLog("Emergency state report error", debugError);
         }
       }
     }
