@@ -27,39 +27,84 @@ export class SurvivalMode extends BaseBehaviorMode {
 
   protected actions: UtilityAction[] = [
     {
-      name: "RESTORE_ENERGY",
+      name: "RETRIEVE_INVENTORY",
       canExecute: (state) => {
-        const energyPercentage = calculateEnergyPercentage(BigInt(state.energy.toString()));
-        const lowEnergy = hasLowEnergy(energyPercentage);
-        const slopInInventory = getSlopCount(state.inventory);
-        const slopInChest = getSlopCount(state.chestInventory);
-        const hasSlop = slopInInventory > 0 || slopInChest > 0;
-        
-        const canExecute = lowEnergy && hasSlop;
+        const hasDeathPosition = !!state.deathPosition;
         
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`RESTORE_ENERGY: energy=${state.energy} (${energyPercentage.toFixed(1)}%), lowEnergy=${lowEnergy} (threshold=${LOW_ENERGY_THRESHOLD}%), slopInInventory=${slopInInventory}, slopInChest=${slopInChest}, hasSlop=${hasSlop} → canExecute=${canExecute}`);
+          global.debugLog(`RETRIEVE_INVENTORY: deathPosition=${JSON.stringify(state.deathPosition)} → canExecute=${hasDeathPosition}`);
         }
         
-        return canExecute;
+        return hasDeathPosition;
       },
       calculateScore: function (state) {
         if (!this.canExecute(state)) return 0;
         
-        const energyPercentage = calculateEnergyPercentage(BigInt(state.energy.toString()));
-        
-        // Score increases as energy gets lower (more urgent)
-        // Energy at 15% = score 10000, energy at 10% = score 15000, etc.
-        const baseScore = 10000;
-        const urgencyMultiplier = (LOW_ENERGY_THRESHOLD - energyPercentage) * 100000;
-        
-        return baseScore + urgencyMultiplier;
+        // This should be the highest priority action possible
+        return 1000000;
       },
       execute: async (bot, state) => {
-        console.log("🚨 Executing critical energy restoration");
-        await checkAndRestoreEnergy(bot);
+        console.log("💀 Executing inventory retrieval from death location");
+        const deathPosition = bot.player.getDeathPosition();
+        
+        if (!deathPosition) {
+          console.log("❌ No death position found, cannot retrieve inventory");
+          return;
+        }
+
+        console.log(`🚶 Moving to death location: ${JSON.stringify(deathPosition)}`);
+        await bot.movement.pathTo(deathPosition);
+        
+        console.log("📦 Attempting to pick up all items at death location");
+        // Use the position as entity ID - the game should have dropped items at this location
+        const entityId = `${deathPosition.x}_${deathPosition.y}_${deathPosition.z}`;
+        try {
+          await bot.inventory.pickUpAll(entityId);
+          console.log("✅ Successfully picked up items from death location");
+          
+          // Clear the death position since we've retrieved the inventory
+          bot.player.clearDeathPosition();
+        } catch (error) {
+          console.log(`⚠️ Failed to pick up items at death location: ${error}`);
+          // Still clear the death position to avoid infinite retry
+          bot.player.clearDeathPosition();
+        }
       },
     },
+    // {
+    //   name: "RESTORE_ENERGY",
+    //   canExecute: (state) => {
+    //     const energyPercentage = calculateEnergyPercentage(BigInt(state.energy.toString()));
+    //     const lowEnergy = hasLowEnergy(energyPercentage);
+    //     const slopInInventory = getSlopCount(state.inventory);
+    //     const slopInChest = getSlopCount(state.chestInventory);
+    //     const hasSlop = slopInInventory > 0 || slopInChest > 0;
+        
+    //     const canExecute = lowEnergy && hasSlop;
+        
+    //     if (typeof global !== 'undefined' && global.debugLog) {
+    //       global.debugLog(`RESTORE_ENERGY: energy=${state.energy} (${energyPercentage.toFixed(1)}%), lowEnergy=${lowEnergy} (threshold=${LOW_ENERGY_THRESHOLD}%), slopInInventory=${slopInInventory}, slopInChest=${slopInChest}, hasSlop=${hasSlop} → canExecute=${canExecute}`);
+    //     }
+        
+    //     return canExecute;
+    //   },
+    //   calculateScore: function (state) {
+    //     if (!this.canExecute(state)) return 0;
+        
+    //     const energyPercentage = calculateEnergyPercentage(BigInt(state.energy.toString()));
+        
+    //     // Score increases as energy gets lower (more urgent)
+    //     // Energy at 15% = score 10000, energy at 10% = score 15000, etc.
+    //     const baseScore = 10000;
+    //     const urgencyMultiplier = (LOW_ENERGY_THRESHOLD - energyPercentage) * 100000;
+        
+    //     return baseScore + urgencyMultiplier;
+    //   },
+    //   execute: async (bot, state) => {
+    //     console.log("🚨 Executing critical energy restoration");
+    //     await checkAndRestoreEnergy(bot);
+    //   },
+    // },
   ];
 
   async isAvailable(state: BotState): Promise<boolean> {
@@ -129,8 +174,12 @@ export class SurvivalMode extends BaseBehaviorMode {
       config.entities.chests?.rightChest
     );
 
+    // Include death position if available
+    const deathPosition = bot.player.getDeathPosition();
+
     const state = {
       chestInventory,
+      ...(deathPosition ? { deathPosition } : {}),
     };
 
     return state;

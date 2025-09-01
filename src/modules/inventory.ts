@@ -98,13 +98,18 @@ export class InventoryModule extends DustGameBase {
 
   // Get comprehensive inventory summary for debugging
   async getInventory(
-    entityId: EntityId
+    entityId: EntityId,
+    maxSlots?: number
   ): Promise<{ type: number; amount: number }[]> {
     // Show all non-empty slots
     const slots: { type: number; amount: number }[] = [];
+    
+    // Default to 36 slots (max in game), but allow override for entity-specific limits
+    // Players: 36 slots, Chests: 27 slots
+    const slotCount = maxSlots || 36;
 
     // Fetch all slots in parallel
-    const slotPromises = Array.from({ length: 40 }, (_, slot) =>
+    const slotPromises = Array.from({ length: slotCount }, (_, slot) =>
       this.getInventorySlot(slot, entityId)
     );
     const slotResults = await Promise.all(slotPromises);
@@ -123,7 +128,7 @@ export class InventoryModule extends DustGameBase {
     itemType: number,
     entityId: EntityId = this.characterEntityId
   ): Promise<[number, number]> {
-    for (let slot = 0; slot < 40; slot++) {
+    for (let slot = 0; slot < 36; slot++) {
       const slotContents = await this.getInventorySlot(slot, entityId);
       if (slotContents?.itemType === itemType) {
         return [slot, slotContents.amount];
@@ -137,7 +142,7 @@ export class InventoryModule extends DustGameBase {
     entityId: EntityId = this.characterEntityId
   ): Promise<[number, number][]> {
     const slots: [number, number][] = [];
-    for (let slot = 0; slot < 40; slot++) {
+    for (let slot = 0; slot < 36; slot++) {
       const slotContents = await this.getInventorySlot(slot, entityId);
       if (slotContents?.itemType === itemType) {
         slots.push([slot, slotContents.amount]);
@@ -147,7 +152,8 @@ export class InventoryModule extends DustGameBase {
   }
 
   async getEmptySlot(entityId: EntityId): Promise<number> {
-    for (let slot = 0; slot < 40; slot++) {
+    // Use 36 slots max (players have 36, chests have 27, but this is safer)
+    for (let slot = 0; slot < 36; slot++) {
       const slotContents = await this.getInventorySlot(slot, entityId);
       if (slotContents?.itemType === 0) {
         return slot;
@@ -246,7 +252,8 @@ export class InventoryModule extends DustGameBase {
 
       // Get all empty slots upfront
       const emptySlots: number[] = [];
-      for (let slot = 0; slot < 40; slot++) {
+      // Use 36 slots max (players have 36, chests have 27, but this is safer)
+      for (let slot = 0; slot < 36; slot++) {
         const slotContents = await this.getInventorySlot(slot, toEntityId);
         if (slotContents?.itemType === 0) {
           emptySlots.push(slot);
@@ -398,7 +405,8 @@ export class InventoryModule extends DustGameBase {
 
       // Get all empty slots upfront
       const emptySlots: number[] = [];
-      for (let slot = 0; slot < 40; slot++) {
+      // Use 36 slots max (players have 36, chests have 27, but this is safer)
+      for (let slot = 0; slot < 36; slot++) {
         const slotContents = await this.getInventorySlot(slot, toEntityId);
         if (slotContents?.itemType === 0) {
           emptySlots.push(slot);

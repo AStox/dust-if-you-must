@@ -5,13 +5,28 @@ import { ethers } from "ethers";
 
 export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
+  private deathPosition: Vec3 | null = null;
 
   async checkStatusAndActivate(bot: DustBot): Promise<void> {
     const playerState = await bot.getPlayerState();
     let playerReady = false;
     switch (playerState) {
       case PlayerState.DEAD:
-        console.log("💀 Player is DEAD - spawning character...");
+        console.log("💀 Player is DEAD - saving death position and spawning character...");
+        
+        // Save death position (current position before respawning)
+        try {
+          const currentPosition = await this.getCurrentPosition();
+          this.deathPosition = currentPosition;
+          console.log(`💀 Death position saved: ${JSON.stringify(currentPosition)}`);
+        } catch (error) {
+          console.log("⚠️ Could not get death position, using last known position");
+          if (this.lastKnownPosition) {
+            this.deathPosition = this.lastKnownPosition;
+            console.log(`💀 Death position set to last known: ${JSON.stringify(this.lastKnownPosition)}`);
+          }
+        }
+        
         const spawnTilePosition = {
           x: -400,
           y: 73,
@@ -220,5 +235,16 @@ export class PlayerModule extends DustGameBase {
     const uint32 = parseInt(hex, 16);
     // Convert to signed 32-bit integer
     return uint32 > 0x7fffffff ? uint32 - 0x100000000 : uint32;
+  }
+
+  // Get the death position if available
+  getDeathPosition(): Vec3 | null {
+    return this.deathPosition;
+  }
+
+  // Clear the death position after successful retrieval
+  clearDeathPosition(): void {
+    this.deathPosition = null;
+    console.log("💀 Death position cleared");
   }
 }

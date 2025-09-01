@@ -97,31 +97,6 @@ export function getFarmingInventoryConfig(): InventoryManagementConfig {
   };
 }
 
-function determineFarmingLocation(
-  position: Vec3
-): "coast" | "house" | "farm" | "unknown" {
-  const areas = getFarmingAreas();
-  const params = getFarmingParameters();
-
-  const distanceToCoast = distance(position, areas.coastPosition);
-  const distanceToHouse = distance(position, areas.housePosition);
-  const distanceToFarm = distance(position, areas.farmCenter);
-
-  const distances = [
-    { location: "coast" as const, distance: distanceToCoast },
-    { location: "house" as const, distance: distanceToHouse },
-    { location: "farm" as const, distance: distanceToFarm },
-  ];
-
-  const closest = distances.reduce((min, current) =>
-    current.distance < min.distance ? current : min
-  );
-
-  if (closest.distance <= params.locationThreshold) return closest.location;
-
-  return "unknown";
-}
-
 /**
  * Farming behavior mode implementation
  */
@@ -136,15 +111,13 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "FILL_BUCKETS",
       canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const atCoast = location === "coast";
         const emptyBucketCount = getItemCount(getObjectIdByName("Bucket"), state.inventory);
         const hasEmptyBuckets = emptyBucketCount > 0;
         
-        const canExecute = atCoast && hasEmptyBuckets;
+        const canExecute = hasEmptyBuckets;
         
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`FILL_BUCKETS: location=${location}, atCoast=${atCoast}, emptyBuckets=${emptyBucketCount}, hasEmptyBuckets=${hasEmptyBuckets} → canExecute=${canExecute}`);
+          global.debugLog(`FILL_BUCKETS: emptyBuckets=${emptyBucketCount}, hasEmptyBuckets=${hasEmptyBuckets} → canExecute=${canExecute}`);
         }
         
         return canExecute;
@@ -153,23 +126,25 @@ export class FarmingMode extends BaseBehaviorMode {
         if (!this.canExecute(state)) return 0;
         return 9999; // High priority when at coast with empty buckets
       },
-      execute: async (bot, state) => await fillBuckets(bot),
+      execute: async (bot, state) => {
+        const areas = getFarmingAreas();
+        await bot.movement.pathTo(areas.coastPosition);
+        await fillBuckets(bot)
+      },
     },
 
     {
       name: "WATER_PLOTS",
       canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const atFarm = location === "farm";
         const bucketCount = getItemCount(getObjectIdByName("WaterBucket"), state.inventory);
         const hasBuckets = bucketCount > 0;
         const unwateredPlots = state.unwateredPlots || 0;
         const hasUnwateredPlots = unwateredPlots > 0;
         
-        const canExecute = atFarm && hasBuckets && hasUnwateredPlots;
+        const canExecute = hasBuckets && hasUnwateredPlots;
         
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`WATER_PLOTS: location=${location}, atFarm=${atFarm}, WaterBuckets=${bucketCount}, hasBuckets=${hasBuckets}, unwateredPlots=${unwateredPlots}, hasUnwateredPlots=${hasUnwateredPlots} → canExecute=${canExecute}`);
+          global.debugLog(`WATER_PLOTS: WaterBuckets=${bucketCount}, hasBuckets=${hasBuckets}, unwateredPlots=${unwateredPlots}, hasUnwateredPlots=${hasUnwateredPlots} → canExecute=${canExecute}`);
         }
         
         return canExecute;
@@ -179,25 +154,25 @@ export class FarmingMode extends BaseBehaviorMode {
         return 9996; // High priority when at farm with water and unwatered plots
       },
       execute: async (bot, state) => {
+        const areas = getFarmingAreas();
+        await bot.movement.pathTo(areas.farmCenter);
         const farmPlots = await generateFarmPlots();
-        await waterFarmPlots(bot, farmPlots, state!.waterBuckets);
+        await waterFarmPlots(bot, farmPlots, getItemCount(getObjectIdByName("WaterBucket"), state.inventory));
       },
     },
 
     {
       name: "SEED_PLOTS",
       canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const atFarm = location === "farm";
         const unseededPlots = state.unseededPlots || 0;
         const hasUnseededPlots = unseededPlots > 0;
         const seedCount = getItemCount(getObjectIdByName("WheatSeed"), state.inventory);
         const hasSeeds = seedCount > 0;
         
-        const canExecute = atFarm && hasUnseededPlots && hasSeeds;
+        const canExecute = hasUnseededPlots && hasSeeds;
         
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`SEED_PLOTS: location=${location}, atFarm=${atFarm}, unseededPlots=${unseededPlots}, hasUnseededPlots=${hasUnseededPlots}, seeds=${seedCount}, hasSeeds=${hasSeeds} → canExecute=${canExecute}`);
+          global.debugLog(`SEED_PLOTS: unseededPlots=${unseededPlots}, hasUnseededPlots=${hasUnseededPlots}, seeds=${seedCount}, hasSeeds=${hasSeeds} → canExecute=${canExecute}`);
         }
         
         return canExecute;
@@ -207,23 +182,23 @@ export class FarmingMode extends BaseBehaviorMode {
         return 9997; // High priority when at farm with seeds and unseeded plots
       },
       execute: async (bot, state) => {
+        const areas = getFarmingAreas();
+        await bot.movement.pathTo(areas.farmCenter);
         const farmPlots = await generateFarmPlots();
-        await seedFarmPlots(bot, farmPlots, state!.inventory);
+        await seedFarmPlots(bot, farmPlots, state.inventory);
       },
     },
 
     {
       name: "GROW_SEEDED_PLOTS",
       canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const atFarm = location === "farm";
         const ungrownPlots = state.ungrownPlots || 0;
         const hasUngrownPlots = ungrownPlots > 0;
         
-        const canExecute = atFarm && hasUngrownPlots;
+        const canExecute = hasUngrownPlots;
         
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`GROW_SEEDED_PLOTS: location=${location}, atFarm=${atFarm}, ungrownPlots=${ungrownPlots}, hasUngrownPlots=${hasUngrownPlots} → canExecute=${canExecute}`);
+          global.debugLog(`GROW_SEEDED_PLOTS: ungrownPlots=${ungrownPlots}, hasUngrownPlots=${hasUngrownPlots} → canExecute=${canExecute}`);
         }
         
         return canExecute;
@@ -233,6 +208,8 @@ export class FarmingMode extends BaseBehaviorMode {
         return 9998; // High priority for growing
       },
       execute: async (bot, state) => {
+        const areas = getFarmingAreas();
+        await bot.movement.pathTo(areas.farmCenter);
         const farmPlots = await generateFarmPlots();
         await growSeededFarmPlots(bot, farmPlots);
       },
@@ -241,15 +218,13 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "HARVEST_PLOTS",
       canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const atFarm = location === "farm";
         const unharvestedPlots = state.unharvestedPlots || 0;
         const hasUnharvestedPlots = unharvestedPlots > 0;
         
-        const canExecute = atFarm && hasUnharvestedPlots;
+        const canExecute = hasUnharvestedPlots;
         
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`HARVEST_PLOTS: location=${location}, atFarm=${atFarm}, unharvestedPlots=${unharvestedPlots}, hasUnharvestedPlots=${hasUnharvestedPlots} → canExecute=${canExecute}`);
+          global.debugLog(`HARVEST_PLOTS: unharvestedPlots=${unharvestedPlots}, hasUnharvestedPlots=${hasUnharvestedPlots} → canExecute=${canExecute}`);
         }
         
         return canExecute;
@@ -259,6 +234,8 @@ export class FarmingMode extends BaseBehaviorMode {
         return 9999; // Highest priority - harvest when ready
       },
       execute: async (bot, state) => {
+        const areas = getFarmingAreas();
+        await bot.movement.pathTo(areas.farmCenter);
         const farmPlots = await generateFarmPlots();
         await harvestFarmPlots(bot, farmPlots);
       },
@@ -267,16 +244,6 @@ export class FarmingMode extends BaseBehaviorMode {
     {
       name: "MANAGE_INVENTORY",
       canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const atFarm = location === "farm";
-        
-        if (!atFarm) {
-          if (typeof global !== 'undefined' && global.debugLog) {
-            global.debugLog(`MANAGE_INVENTORY: location=${location}, atFarm=${atFarm} → canExecute=false`);
-          }
-          return false;
-        }
-
         const params = getFarmingParameters();
         const bucketId = getObjectIdByName("Bucket")!;
         const wheatSeedId = getObjectIdByName("WheatSeed")!;
@@ -321,7 +288,7 @@ export class FarmingMode extends BaseBehaviorMode {
           needWheat;
 
         if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`MANAGE_INVENTORY: location=${location}, atFarm=${atFarm}, hasNonFarmingItems=${hasNonFarmingItems} (${nonFarmingItems.length} items), currentBuckets=${currentBuckets}/${params.targetBuckets}, needBuckets=${needBuckets} (chest: ${bucketsInChest + waterBucketsInChest}), currentSeeds=${currentSeedsInInventory}/${params.targetSeeds}, needSeeds=${needSeeds} (chest: ${seedsInChest}), currentWheat=${currentWheatInInventory}/${params.targetWheat}, needWheat=${needWheat} (chest: ${wheatInChest}) → canExecute=${shouldManage}`);
+          global.debugLog(`MANAGE_INVENTORY: hasNonFarmingItems=${hasNonFarmingItems} (${nonFarmingItems.length} items), currentBuckets=${currentBuckets}/${params.targetBuckets}, needBuckets=${needBuckets} (chest: ${bucketsInChest + waterBucketsInChest}), currentSeeds=${currentSeedsInInventory}/${params.targetSeeds}, needSeeds=${needSeeds} (chest: ${seedsInChest}), currentWheat=${currentWheatInInventory}/${params.targetWheat}, needWheat=${needWheat} (chest: ${wheatInChest}) → canExecute=${shouldManage}`);
         }
 
         return shouldManage;
@@ -340,6 +307,8 @@ export class FarmingMode extends BaseBehaviorMode {
         return score;
       },
       execute: async (bot, state) => {
+        const areas = getFarmingAreas();
+        bot.movement.pathTo(areas.farmCenter);
         const config = getFarmingInventoryConfig();
         await InventoryManager.manageInventory(bot, config);
       },
@@ -371,109 +340,109 @@ export class FarmingMode extends BaseBehaviorMode {
       },
     },
 
-    {
-      name: "MOVE_TO_COAST",
-      canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const notAtCoast = location !== "coast";
-        const emptyBucketCount = getItemCount(getObjectIdByName("Bucket"), state.inventory);
-        const hasEmptyBuckets = emptyBucketCount > 0;
+    // {
+    //   name: "MOVE_TO_COAST",
+    //   canExecute: (state) => {
+    //     const location = determineFarmingLocation(state.position);
+    //     const notAtCoast = location !== "coast";
+    //     const emptyBucketCount = getItemCount(getObjectIdByName("Bucket"), state.inventory);
+    //     const hasEmptyBuckets = emptyBucketCount > 0;
         
-        const canExecute = notAtCoast && hasEmptyBuckets;
+    //     const canExecute = notAtCoast && hasEmptyBuckets;
         
-        if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`MOVE_TO_COAST: location=${location}, notAtCoast=${notAtCoast}, emptyBuckets=${emptyBucketCount}, hasEmptyBuckets=${hasEmptyBuckets} → canExecute=${canExecute}`);
-        }
+    //     if (typeof global !== 'undefined' && global.debugLog) {
+    //       global.debugLog(`MOVE_TO_COAST: location=${location}, notAtCoast=${notAtCoast}, emptyBuckets=${emptyBucketCount}, hasEmptyBuckets=${hasEmptyBuckets} → canExecute=${canExecute}`);
+    //     }
         
-        return canExecute;
-      },
-      calculateScore: function (state) {
-        if (!this.canExecute(state)) return 0;
-        let score = 15;
-        const areas = getFarmingAreas();
-        const distanceFromCoast = distance(
-          state.position,
-          areas.coastPosition
-        );
+    //     return canExecute;
+    //   },
+    //   calculateScore: function (state) {
+    //     if (!this.canExecute(state)) return 0;
+    //     let score = 15;
+    //     const areas = getFarmingAreas();
+    //     const distanceFromCoast = distance(
+    //       state.position,
+    //       areas.coastPosition
+    //     );
 
-        // Higher priority if we're out of water entirely
-        if (getItemCount(getObjectIdByName("Bucket"), state.inventory) === 0 && state.unwateredPlots > 0) score += 20;
-        return score;
-      },
-      execute: async (bot, state) => {
-        const areas = getFarmingAreas();
-        await bot.movement.pathTo(areas.coastPosition);
-      },
-    },
+    //     // Higher priority if we're out of water entirely
+    //     if (getItemCount(getObjectIdByName("Bucket"), state.inventory) === 0 && state.unwateredPlots > 0) score += 20;
+    //     return score;
+    //   },
+    //   execute: async (bot, state) => {
+    //     const areas = getFarmingAreas();
+    //     await bot.movement.pathTo(areas.coastPosition);
+    //   },
+    // },
 
-    {
-      name: "MOVE_TO_FARM",
-      canExecute: (state) => {
-        const notAtFarm = determineFarmingLocation(state.position) !== "farm";
-        const waterBuckets = getItemCount(getObjectIdByName("WaterBucket"), state.inventory);
-        const hasWaterBuckets = waterBuckets > 0;
+    // {
+    //   name: "MOVE_TO_FARM",
+    //   canExecute: (state) => {
+    //     const notAtFarm = determineFarmingLocation(state.position) !== "farm";
+    //     const waterBuckets = getItemCount(getObjectIdByName("WaterBucket"), state.inventory);
+    //     const hasWaterBuckets = waterBuckets > 0;
         
-        const canExecute = notAtFarm && hasWaterBuckets;
+    //     const canExecute = notAtFarm && hasWaterBuckets;
         
-        if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`MOVE_TO_FARM: location=${determineFarmingLocation(state.position)}, notAtFarm=${notAtFarm}, waterBuckets=${waterBuckets}, hasWaterBuckets=${hasWaterBuckets} → canExecute=${canExecute}`);
-        }
+    //     if (typeof global !== 'undefined' && global.debugLog) {
+    //       global.debugLog(`MOVE_TO_FARM: location=${determineFarmingLocation(state.position)}, notAtFarm=${notAtFarm}, waterBuckets=${waterBuckets}, hasWaterBuckets=${hasWaterBuckets} → canExecute=${canExecute}`);
+    //     }
         
-        return canExecute;
-      },
-      calculateScore: function (state) {
-        if (!this.canExecute(state)) return 0;
-        let score = 0;
-        const areas = getFarmingAreas();
-        const distanceFromFarm = distance(
-          state.position,
-          areas.farmCenter
-        );
-        score -= distanceFromFarm * 0.1; // Prefer shorter trips
-        score += state.waterBuckets * 2; // Higher priority with more water
-        return score;
-      },
-      execute: async (bot, state) => {
-        await walkToHouse(bot);
-        await walkToFarmCenter(bot);
-      },
-    },
-    {
-      name: "GET_TO_KNOWN_LOCATION",
-      canExecute: (state) => {
-        const location = determineFarmingLocation(state.position);
-        const isUnknownLocation = location === "unknown";
+    //     return canExecute;
+    //   },
+    //   calculateScore: function (state) {
+    //     if (!this.canExecute(state)) return 0;
+    //     let score = 0;
+    //     const areas = getFarmingAreas();
+    //     const distanceFromFarm = distance(
+    //       state.position,
+    //       areas.farmCenter
+    //     );
+    //     score -= distanceFromFarm * 0.1; // Prefer shorter trips
+    //     score += state.waterBuckets * 2; // Higher priority with more water
+    //     return score;
+    //   },
+    //   execute: async (bot, state) => {
+    //     await walkToHouse(bot);
+    //     await walkToFarmCenter(bot);
+    //   },
+    // },
+    // {
+    //   name: "GET_TO_KNOWN_LOCATION",
+    //   canExecute: (state) => {
+    //     const location = determineFarmingLocation(state.position);
+    //     const isUnknownLocation = location === "unknown";
         
-        if (typeof global !== 'undefined' && global.debugLog) {
-          global.debugLog(`GET_TO_KNOWN_LOCATION: location=${location}, isUnknownLocation=${isUnknownLocation} → canExecute=${isUnknownLocation}`);
-        }
+    //     if (typeof global !== 'undefined' && global.debugLog) {
+    //       global.debugLog(`GET_TO_KNOWN_LOCATION: location=${location}, isUnknownLocation=${isUnknownLocation} → canExecute=${isUnknownLocation}`);
+    //     }
         
-        return isUnknownLocation;
-      },
-      calculateScore: function (state) {
-        if (!this.canExecute(state)) return 0;
-        return 500; // Medium-high priority - important to get to a known location
-      },
-      execute: async (bot, state) => {
-        const areas = getFarmingAreas();
-        console.log(
-          `🎯 Navigating to farm center: (${areas.farmCenter.x}, ${areas.farmCenter.z})`
-        );
+    //     return isUnknownLocation;
+    //   },
+    //   calculateScore: function (state) {
+    //     if (!this.canExecute(state)) return 0;
+    //     return 500; // Medium-high priority - important to get to a known location
+    //   },
+    //   execute: async (bot, state) => {
+    //     const areas = getFarmingAreas();
+    //     console.log(
+    //       `🎯 Navigating to farm center: (${areas.farmCenter.x}, ${areas.farmCenter.z})`
+    //     );
 
-        try {
-          console.log("🔄 Starting pathfinding to farm center");
-          await bot.movement.pathTo({
-            x: areas.farmCenter.x,
-            y: areas.farmCenter.y,
-            z: areas.farmCenter.z,
-          });
-          console.log("✅ Successfully reached farm center area");
-        } catch (error) {
-          console.error("❌ Failed to reach farm center:", error);
-          throw error;
-        }
-      },
-    },
+    //     try {
+    //       console.log("🔄 Starting pathfinding to farm center");
+    //       await bot.movement.pathTo({
+    //         x: areas.farmCenter.x,
+    //         y: areas.farmCenter.y,
+    //         z: areas.farmCenter.z,
+    //       });
+    //       console.log("✅ Successfully reached farm center area");
+    //     } catch (error) {
+    //       console.error("❌ Failed to reach farm center:", error);
+    //       throw error;
+    //     }
+    //   },
+    // },
   ];
 
   async isAvailable(state: BotState): Promise<boolean> {

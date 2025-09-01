@@ -35,10 +35,6 @@ export class FarmingModule extends DustGameBase {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
     }
 
-    console.log(
-      `🌾 Watering farmland at (${coord.x}, ${coord.y}, ${coord.z}) with bucket from slot ${bucketSlot}`
-    );
-
     await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.BUCKET_SYSTEM,
       "wetFarmland(bytes32,uint96,uint16)",
@@ -53,10 +49,6 @@ export class FarmingModule extends DustGameBase {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
     }
 
-    console.log(
-      `🚜 Tilling farmland at (${coord.x}, ${coord.y}, ${coord.z}) with tool from slot ${toolSlot}`
-    );
-
     await this.executeSystemCall(
       this.SYSTEM_IDS.FARMING_SYSTEM,
       "till(bytes32,uint96,uint16)",
@@ -69,10 +61,6 @@ export class FarmingModule extends DustGameBase {
     if (!isValidCoordinate(coord)) {
       throw new Error(`Invalid coordinate: ${JSON.stringify(coord)}`);
     }
-
-    console.log(
-      `🌱 Planting seeds at (${coord.x}, ${coord.y}, ${coord.z}) from slot ${seedSlot}`
-    );
 
     await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.BUILD_SYSTEM,

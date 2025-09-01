@@ -1,6 +1,7 @@
 import { DustBot } from "../../../index.js";
 import { Vec3 } from "../../../types/base.js";
 import { getOperationalConfig } from "../../../config/loader.js";
+import { ObjectTypes } from "../../../types/objectTypes.js";
 
 export interface InventoryRequirement {
   type: number;
@@ -46,10 +47,12 @@ export class InventoryManager {
     config: InventoryManagementConfig
   ): Promise<boolean> {
     const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
+      bot.player.characterEntityId,
+      36 // Player has 36 slots (4 rows of 9)
     );
     const chestInventory = await bot.inventory.getInventory(
-      await this.getChestEntityId()
+      await this.getChestEntityId(),
+      27 // Chest has 27 slots (3 rows of 9)
     );
 
     // Check for non-allowed items
@@ -118,11 +121,15 @@ export class InventoryManager {
 
     const chestEntityId = await this.getChestEntityId();
 
-    // Get current inventories
+    // Get current inventories with proper slot limits
     const inventory = await bot.inventory.getInventory(
-      bot.player.characterEntityId
+      bot.player.characterEntityId,
+      36 // Player has 36 slots (4 rows of 9)
     );
-    const chestInventory = await bot.inventory.getInventory(chestEntityId);
+    const chestInventory = await bot.inventory.getInventory(
+      chestEntityId,
+      27 // Chest has 27 slots (3 rows of 9)
+    );
 
     // Debug both inventories
     console.log("📦 Player inventory contents:");
@@ -213,10 +220,11 @@ export class InventoryManager {
     for (let playerSlot = 0; playerSlot < playerInventory.length; playerSlot++) {
       const item = playerInventory[playerSlot];
       if (item.amount > 0 && !allowedItems.includes(item.type)) {
-        const emptyChestSlot = chestInventory.findIndex(slot => slot.amount === 0);
+        // Chest has max 27 slots (0-26), so limit search to valid range
+        const emptyChestSlot = chestInventory.slice(0, 27).findIndex(slot => slot.amount === 0);
         if (emptyChestSlot !== -1) {
           transfers.push([playerSlot, emptyChestSlot, item.amount]);
-          console.log(`  📦 Planned: Store ${item.amount}x type ${item.type} from player slot ${playerSlot} to chest slot ${emptyChestSlot}`);
+          console.log(`  📦 Planned: Store ${item.amount}x type ${ObjectTypes[item.type].name} from player slot ${playerSlot} to chest slot ${emptyChestSlot}`);
           
           // Update virtual inventories
           chestInventory[emptyChestSlot] = { type: item.type, amount: item.amount };
@@ -291,10 +299,11 @@ export class InventoryManager {
         const item = playerInventory[playerSlot];
         if (item.type === req.type && item.amount > 0) {
           const toTransfer = Math.min(remaining, item.amount);
-          const emptyChestSlot = chestInventory.findIndex(slot => slot.amount === 0);
-          if (emptyChestSlot !== -1) {
+          // Chest has max 27 slots (0-26), so limit search to valid range
+          const emptyChestSlot = chestInventory.slice(0, 27).findIndex(slot => slot.amount === 0);
+           if (emptyChestSlot !== -1) {
             toChestTransfers.push([playerSlot, emptyChestSlot, toTransfer]);
-            console.log(`  📦 Planned: Store ${toTransfer}x type ${req.type} from player slot ${playerSlot} to chest slot ${emptyChestSlot}`);
+            console.log(`  📦 Planned: Store ${toTransfer}x type ${ObjectTypes[req.type].name} from player slot ${playerSlot} to chest slot ${emptyChestSlot}`);
             
             // Update virtual states
             chestInventory[emptyChestSlot] = { type: req.type, amount: toTransfer };
@@ -337,7 +346,7 @@ export class InventoryManager {
                 const nextPlayerSlot = playerInventory.findIndex((item, idx) => idx >= playerSlot && item.amount === 0);
                 if (nextPlayerSlot !== -1) {
                   transfers.push([chestSlot, nextPlayerSlot, 1]);
-                  console.log(`  📦 Planned: Take 1x type ${targetType} (bucket) from chest slot ${chestSlot} to player slot ${nextPlayerSlot}`);
+                  console.log(`  📦 Planned: Take 1x type ${ObjectTypes[targetType].name} (bucket) from chest slot ${chestSlot} to player slot ${nextPlayerSlot}`);
                   
                   // Update virtual states
                   chestInventory[chestSlot].amount -= 1;
@@ -348,7 +357,7 @@ export class InventoryManager {
             } else {
               // Regular items can stack
               transfers.push([chestSlot, playerSlot, toTake]);
-              console.log(`  📦 Planned: Take ${toTake}x type ${targetType} from chest slot ${chestSlot} to player slot ${playerSlot}`);
+              console.log(`  📦 Planned: Take ${toTake}x type ${ObjectTypes[targetType].name} from chest slot ${chestSlot} to player slot ${playerSlot}`);
               
               // Update virtual states
               chestInventory[chestSlot].amount -= toTake;
@@ -371,10 +380,10 @@ export class InventoryManager {
         if (available.length > 0) {
           available.forEach((item, idx) => {
             const slotIndex = chestInventory.findIndex(slot => slot === item);
-            console.log(`      Slot ${slotIndex}: ${item.amount}x type ${type}`);
+            console.log(`      Slot ${slotIndex}: ${item.amount}x type ${ObjectTypes[type].name}`);
           });
         } else {
-          console.log(`      No type ${type} found in chest`);
+          console.log(`      No type ${ObjectTypes[type].name} found in chest`);
         }
       });
     }

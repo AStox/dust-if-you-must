@@ -67,11 +67,12 @@ export interface BotState {
   chestInventory: InventoryItem[];
   nearbyTreeBlocks: boolean;
   hasPlantablePositions: boolean;
+  deathPosition?: Vec3;
 }
 
 export interface UtilityAction {
   name: string;
   calculateScore(state: BotState): number;
-  execute(bot: any, state?: BotState): Promise<void>; // Using any to avoid circular import, state is optional for backward compatibility
+  execute(bot: any, state: BotState): Promise<void>; // Using any to avoid circular import, state is optional for backward compatibility
   canExecute(state: BotState): boolean;
 }

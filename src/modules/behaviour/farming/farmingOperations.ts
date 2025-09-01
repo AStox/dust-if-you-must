@@ -352,15 +352,6 @@ export async function growSeededFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
 
   console.log(`🌱 Found ${plotsToGrow.length} plots ready for growing`);
 
-  // Log skipped plots
-  for (const { plot, plotType, needsGrowing } of plotResults) {
-    if (!needsGrowing) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
-      );
-    }
-  }
-
   if (plotsToGrow.length === 0) {
     console.log("ℹ️ No plots available for growing");
     return;

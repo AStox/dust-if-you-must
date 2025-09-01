@@ -14,6 +14,11 @@ interface ModeEvaluation {
   hasNonInventoryAfterInventory: boolean;
 }
 
+interface ModeSelectionResult {
+  mode: IBehaviorMode;
+  needsInventoryFirst: boolean;
+}
+
 /**
  * Check if a mode has inventory management functionality
  */
@@ -210,7 +215,7 @@ function logBotState(state: BotState): void {
 export async function selectBestBehaviorMode(
   bot: DustBot,
   availableModes: IBehaviorMode[]
-): Promise<IBehaviorMode | null> {
+): Promise<ModeSelectionResult | null> {
   console.log("\nMODE SELECTION (Two-Phase)");
   console.log("─".repeat(50));
   
@@ -221,7 +226,7 @@ export async function selectBestBehaviorMode(
 
   if (availableModes.length === 1) {
     console.log(`  🎯 Only one mode available: ${availableModes[0].name}`);
-    return availableModes[0];
+    return { mode: availableModes[0], needsInventoryFirst: false };
   }
 
   // Evaluate all modes with two-phase approach
@@ -270,12 +275,12 @@ export async function selectBestBehaviorMode(
   for (const evaluation of evaluations) {
     if (evaluation.hasNonInventoryImmediateActions) {
       console.log(`\n✅ Selected ${evaluation.mode.name}: has immediate non-inventory actions`);
-      return evaluation.mode;
+      return { mode: evaluation.mode, needsInventoryFirst: false };
     }
     
     if (evaluation.hasNonInventoryAfterInventory) {
       console.log(`\n✅ Selected ${evaluation.mode.name}: will have actions after inventory management`);
-      return evaluation.mode;
+      return { mode: evaluation.mode, needsInventoryFirst: true };
     }
   }
 
@@ -318,10 +323,33 @@ export async function executeBehaviorCycle(
     logBotState(bot.state);
 
     // Select best behavior mode
-    const selectedMode = await selectBestBehaviorMode(bot, availableModes);
+    const selectionResult = await selectBestBehaviorMode(bot, availableModes);
 
-    if (!selectedMode) {
+    if (!selectionResult) {
       throw new Error("No behavior mode selected");
+    }
+
+    const { mode: selectedMode, needsInventoryFirst } = selectionResult;
+
+    // If the mode needs inventory management first, run it
+    if (needsInventoryFirst && hasInventoryManagement(selectedMode)) {
+      console.log(`\n🔄 Running inventory management first for ${selectedMode.name}`);
+      const config = getInventoryConfigForMode(selectedMode);
+      if (config) {
+        const { InventoryManager } = await import("./shared/inventoryManager.js");
+        await InventoryManager.manageInventory(bot, config);
+        
+        // Refresh state after inventory management
+        const baseState = await assessBaseState(bot);
+        const modeStatePromises = availableModes.map(mode => mode.assessState(bot));
+        const modeStates = await Promise.all(modeStatePromises);
+        
+        let combinedState = baseState;
+        for (const modeState of modeStates) {
+          combinedState = { ...combinedState, ...modeState };
+        }
+        bot.state = combinedState as BotState;
+      }
     }
 
     // Select and execute action

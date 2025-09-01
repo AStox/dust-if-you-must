@@ -141,9 +141,6 @@ export async function waterFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
 
     const plotType = await bot.world.getBlockType(plot);
     if (plotType !== getObjectIdByName("Farmland")!) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
-      );
       continue; // Skip already watered or non-farmland plots
     }
 
@@ -169,9 +166,6 @@ export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
 
     const plotType = await bot.world.getBlockType(plot);
     if (plotType !== getObjectIdByName("WetFarmland")!) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
-      );
       continue; // Skip can only seed on wet farmland
     }
 
@@ -181,9 +175,6 @@ export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
       z: plot.z,
     });
     if (plotType2 === getObjectIdByName("WheatSeed")!) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - already has wheat`
-      );
       continue; // Skip can only seed where there isn't wheat already
     }
 
@@ -195,8 +186,7 @@ export async function seedFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
     const seedCount = inventory.filter((item) => item.type === seedId).length;
 
     if (seedCount === 0) {
-      console.log("🪣 Out of seeds - stopping seeding");
-      break;
+      continue; // Skip can only seed where there isn't wheat already
     }
 
     try {
@@ -250,10 +240,6 @@ export async function growSeededFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
           `⚠️ Failed to grow seed at (${plot.x}, ${plot.y}, ${plot.z}) - ${error}`
         );
       }
-    } else {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
-      );
     }
   }
 }
@@ -272,9 +258,6 @@ export async function harvestFarmPlots(bot: DustBot, farmPlots: Vec3[]) {
       z: plot.z,
     });
     if (plotType !== getObjectIdByName("Wheat")!) {
-      console.log(
-        `⚠️ Skipping plot at (${plot.x}, ${plot.y}, ${plot.z}) - ${ObjectTypes[plotType].name}`
-      );
       continue; // Skip can only harvest wheat
     }
 
