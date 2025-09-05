@@ -531,4 +531,110 @@ export class InventoryModule extends DustGameBase {
       "Eating"
     );
   }
+
+  // Sort and consolidate inventory items to optimize storage
+  async sortInventory(
+    currentInventory: { type: number; amount: number }[],
+    entityId: EntityId = this.characterEntityId
+  ): Promise<void> {
+    console.log("📦 Sorting and consolidating inventory...");
+    
+    // Group items by type, ignoring empty slots (type 0)
+    const itemGroups: Map<number, Array<{slot: number, amount: number}>> = new Map();
+    
+    for (let slot = 0; slot < currentInventory.length; slot++) {
+      const item = currentInventory[slot];
+      if (item.type !== 0) { // Skip empty slots
+        if (!itemGroups.has(item.type)) {
+          itemGroups.set(item.type, []);
+        }
+        itemGroups.get(item.type)!.push({slot, amount: item.amount});
+      }
+    }
+
+    // Calculate optimal distribution for each item type
+    const transfers: [number, number, number][] = []; // [fromSlot, toSlot, amount]
+    
+    for (const [itemType, slots] of itemGroups) {
+      if (slots.length <= 1) continue; // Already optimal
+      
+      const maxStackSize = this.getMaxStackSize(itemType);
+      const totalAmount = slots.reduce((sum, slot) => sum + slot.amount, 0);
+      
+      // Calculate how many slots we need for this item type
+      const slotsNeeded = Math.ceil(totalAmount / maxStackSize);
+      
+      // Sort slots by slot number to prefer lower slot numbers
+      slots.sort((a, b) => a.slot - b.slot);
+      
+      // Plan optimal distribution: use first N slots, fill them optimally
+      const targetSlots = slots.slice(0, slotsNeeded);
+      let remainingAmount = totalAmount;
+      
+      // Calculate target amounts for each slot
+      const targetDistribution: Array<{slot: number, targetAmount: number}> = [];
+      for (let i = 0; i < targetSlots.length; i++) {
+        const amountForThisSlot = Math.min(maxStackSize, remainingAmount);
+        targetDistribution.push({
+          slot: targetSlots[i].slot,
+          targetAmount: amountForThisSlot
+        });
+        remainingAmount -= amountForThisSlot;
+      }
+
+      // Clear all slots that shouldn't have this item type anymore
+      const slotsToEmpty = slots.slice(slotsNeeded);
+      for (const emptySlot of slotsToEmpty) {
+        // Find a target slot that needs more items
+        for (const target of targetDistribution) {
+          const currentInTarget = slots.find(s => s.slot === target.slot)?.amount || 0;
+          const needed = target.targetAmount - currentInTarget;
+          if (needed > 0) {
+            const amountToMove = Math.min(emptySlot.amount, needed);
+            if (amountToMove > 0) {
+              transfers.push([emptySlot.slot, target.slot, amountToMove]);
+              emptySlot.amount -= amountToMove;
+              target.targetAmount -= amountToMove;
+            }
+          }
+          if (emptySlot.amount === 0) break;
+        }
+      }
+
+      // Balance between target slots if needed
+      for (let i = 0; i < targetDistribution.length; i++) {
+        const source = targetDistribution[i];
+        const currentInSource = slots.find(s => s.slot === source.slot)?.amount || 0;
+        
+        if (currentInSource > source.targetAmount) {
+          // This slot has too much, move excess to other slots
+          let excess = currentInSource - source.targetAmount;
+          
+          for (let j = 0; j < targetDistribution.length && excess > 0; j++) {
+            if (i === j) continue;
+            
+            const target = targetDistribution[j];
+            const currentInTarget = slots.find(s => s.slot === target.slot)?.amount || 0;
+            const needed = target.targetAmount - currentInTarget;
+            
+            if (needed > 0) {
+              const amountToMove = Math.min(excess, needed);
+              transfers.push([source.slot, target.slot, amountToMove]);
+              excess -= amountToMove;
+            }
+          }
+        }
+      }
+      
+      console.log(`  📋 ${getItemName(itemType)}: ${slots.length} slots → ${slotsNeeded} slots (${totalAmount} total, max stack: ${maxStackSize})`);
+    }
+
+    if (transfers.length > 0) {
+      console.log(`🔄 Executing ${transfers.length} inventory transfers...`);
+      await this.transfer(entityId, entityId, transfers);
+      console.log("✅ Inventory sorted and consolidated");
+    } else {
+      console.log("✅ Inventory already optimally organized");
+    }
+  }
 }

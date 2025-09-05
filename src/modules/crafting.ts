@@ -1,6 +1,7 @@
 import { DustGameBase } from "../core/base.js";
 import { SlotAmount, Vec3, ObjectTypes } from "../types";
 import { packVec3, isValidCoordinate } from "../utils.js";
+import { InventoryModule } from "./inventory.js";
 
 export interface Recipe {
   id: string;
@@ -10,6 +11,13 @@ export interface Recipe {
 }
 
 export class CraftingModule extends DustGameBase {
+  private inventory: InventoryModule;
+
+  constructor() {
+    super();
+    this.inventory = new InventoryModule();
+  }
+
   // Predefined common recipes (these may need to be updated based on actual game recipes)
   public recipes: Record<string, Recipe> = {
     WheatSlop: {
@@ -26,7 +34,11 @@ export class CraftingModule extends DustGameBase {
         .map(([slot, amount]) => `${slot}(${amount})`)
         .join(", ")}]`
     );
-    console.log(this.characterEntityId, recipeId, inputs);
+
+    // Get current inventory and sort it before crafting to ensure items are properly consolidated
+    const currentInventory = await this.inventory.getInventory(this.characterEntityId);
+    await this.inventory.sortInventory(currentInventory, this.characterEntityId);
+
     await this.executeSystemCallNonBlocking(
       this.SYSTEM_IDS.CRAFT_SYSTEM,
       "craft(bytes32,bytes32,(uint16,uint16)[])",
