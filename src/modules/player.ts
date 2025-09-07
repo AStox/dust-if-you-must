@@ -7,24 +7,32 @@ export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
   private deathPosition: Vec3 | null = null;
 
-  async checkStatusAndActivate(bot: DustBot): Promise<void> {
+  async checkStatusAndActivate(bot: DustBot, preActivationPosition?: Vec3 | null): Promise<void> {
     const playerState = await bot.getPlayerState();
     let playerReady = false;
     switch (playerState) {
       case PlayerState.DEAD:
-        console.log("💀 Player is DEAD - saving death position and spawning character...");
+        console.log("💀 Player is DEAD - determining death scenario...");
         
-        // Save death position (current position before respawning)
-        try {
-          const currentPosition = await this.getCurrentPosition();
-          this.deathPosition = currentPosition;
-          console.log(`💀 Death position saved: ${JSON.stringify(currentPosition)}`);
-        } catch (error) {
-          console.log("⚠️ Could not get death position, using last known position");
-          if (this.lastKnownPosition) {
-            this.deathPosition = this.lastKnownPosition;
-            console.log(`💀 Death position set to last known: ${JSON.stringify(this.lastKnownPosition)}`);
+        // Use pre-activation position as death position (from before activate() call)
+        if (preActivationPosition) {
+          this.deathPosition = preActivationPosition;
+          
+          // Check if this is scenario 1: died during action (position is 0,0,0)
+          if (preActivationPosition.x === 0 && preActivationPosition.y === 0 && preActivationPosition.z === 0) {
+            console.log("💀❌ CRITICAL: Bot died during action - position reset to (0,0,0)");
+            console.log("💀❌ Cannot recover inventory from this death");
+            console.log("💀❌ Killing process - manual intervention required");
+            process.exit(1);
           }
+          
+          console.log(`💀 Death position saved (offline death): ${JSON.stringify(preActivationPosition)}`);
+        } else if (this.lastKnownPosition) {
+          this.deathPosition = this.lastKnownPosition;
+          console.log(`💀 Death position set to last known: ${JSON.stringify(this.lastKnownPosition)}`);
+        } else {
+          console.log("💀❌ CRITICAL: No death position available - killing process");
+          process.exit(1);
         }
         
         const spawnTilePosition = {

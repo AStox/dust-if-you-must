@@ -100,6 +100,17 @@ async function runComprehensiveProcedure() {
       console.log("\n🚀 CHECKING & ACTIVATING CHARACTER");
       debugLog(`Starting cycle ${cycleCount} - character activation`);
       
+      // Record position before activation (to detect death scenarios)
+      debugLog("Recording position before activation...");
+      let preActivationPosition;
+      try {
+        preActivationPosition = await bot.player.getCurrentPosition();
+        debugLog(`Pre-activation position: ${JSON.stringify(preActivationPosition)}`);
+      } catch (error) {
+        debugLog(`Could not get pre-activation position: ${error}`);
+        preActivationPosition = null;
+      }
+
       // activate character (needed for all modes to handle dead players)
       debugLog("Activating player character...");
       await bot.player.activate();
@@ -110,7 +121,7 @@ async function runComprehensiveProcedure() {
 
       // Get the actual player state from game tables
       debugLog("Checking player status and activating...");
-      await bot.player.checkStatusAndActivate(bot);
+      await bot.player.checkStatusAndActivate(bot, preActivationPosition);
 
       // Execute behavior cycle with all modes - will automatically select highest priority available mode
       debugLog("Executing behavior cycle with all modes...");
