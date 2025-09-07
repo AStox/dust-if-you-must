@@ -13,6 +13,7 @@ export class WorldModule extends DustGameBase {
   private VEC3_BITS = 96n;
 
   public blockCache = new Map<string, { blockType: number; biome: number }>();
+  private chunkBytecodeCache = new Map<string, string>();
   private chunksDir = path.join(process.cwd(), "chunks");
 
   // Entity Types enum (from original codebase)
@@ -41,16 +42,24 @@ export class WorldModule extends DustGameBase {
 
   // Get chunk bytecode from cache or provider
   private async getChunkBytecode(chunkPointer: string): Promise<string> {
+    // Check in-memory cache first
+    if (this.chunkBytecodeCache.has(chunkPointer)) {
+      return this.chunkBytecodeCache.get(chunkPointer)!;
+    }
+
     this.ensureChunksDir();
     const filename = this.getChunkFilename(chunkPointer);
 
-    // Try to read from cache first
+    // Try to read from disk cache
     if (fs.existsSync(filename)) {
-      return fs.readFileSync(filename, "utf8");
+      const code = fs.readFileSync(filename, "utf8");
+      this.chunkBytecodeCache.set(chunkPointer, code);
+      return code;
     }
 
-    // Fetch from provider and cache
+    // Fetch from provider and cache both in-memory and on disk
     const code = await this.provider.getCode(chunkPointer);
+    this.chunkBytecodeCache.set(chunkPointer, code);
     fs.writeFileSync(filename, code, "utf8");
     return code;
   }
@@ -62,6 +71,10 @@ export class WorldModule extends DustGameBase {
     const chunkPointer = this.getChunkPointer(chunkCoord, worldAddress);
     const filename = this.getChunkFilename(chunkPointer);
 
+    // Remove from in-memory cache
+    this.chunkBytecodeCache.delete(chunkPointer);
+
+    // Remove from disk cache
     if (fs.existsSync(filename)) {
       fs.unlinkSync(filename);
     }
@@ -123,6 +136,7 @@ export class WorldModule extends DustGameBase {
 
   clearCache(): void {
     this.blockCache.clear();
+    this.chunkBytecodeCache.clear();
   }
 
   async getObjectTypeAt(coord: Vec3): Promise<number> {

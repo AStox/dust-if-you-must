@@ -226,8 +226,10 @@ export class MovementModule extends DustGameBase {
     ) {
       attempts++;
       console.log(`\n🔄 Pathfinding attempt ${attempts}/${maxAttempts}`);
-      console.log(`📍 Current: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`);
-      console.log(`🎯 Target:  (${target.x}, ${target.y}, ${target.z})`);
+      const chunkPos = await this.world.toChunkCoord(currentPos);
+      console.log(`📍 Current: (${currentPos.x}, ${currentPos.y}, ${currentPos.z}), chunk: (${chunkPos.x}, ${chunkPos.y}, ${chunkPos.z})`);
+      const targetChunkPos = await this.world.toChunkCoord(target);
+      console.log(`🎯 Target:  (${target.x}, ${target.y}, ${target.z}), chunk: (${targetChunkPos.x}, ${targetChunkPos.y}, ${targetChunkPos.z})`);
       
       // Get path from pathfinding module (may be partial)
       const path = await this.pathfinding.pathTo(target);

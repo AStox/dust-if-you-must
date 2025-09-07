@@ -34,7 +34,6 @@ async function runComprehensiveProcedure() {
       configPath: "./config/operational.json",
       validateSchema: true,
       allowEnvironmentOverrides: true,
-      requireEnergizeAreas: true, // Required for energize mode
     });
     debugLog("Configuration loaded successfully");
   } catch (error) {

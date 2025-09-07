@@ -3,6 +3,11 @@
   "name": "Default DUST Farm Configuration",
   "description": "Default operational configuration for DUST AI agent farming operations. This includes the standard farm area, water collection points, and storage configurations.",
   "areas": {
+    "spawnTile": {
+      "x": -400,
+      "y": 73,
+      "z": 492
+    },
     "farming": {
       "farmCenter": {
         "x": -401,
@@ -68,7 +73,8 @@
     },
     "powerStones": {
       "powerStone": "0x03fffffe7400000049000001ea00000000000000000000000000000000000000"
-    }
+    },
+    "spawnTile": "0x03fffffe7000000048000001ec00000000000000000000000000000000000000"
   },
   "parameters": {
     "locationThreshold": 1,

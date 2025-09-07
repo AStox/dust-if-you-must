@@ -1,7 +1,8 @@
+import { getOperationalConfig } from "../config/loader.js";
 import { DustGameBase, PlayerState } from "../core/base.js";
+import { ENERGY_TABLE_ID, ENTITY_POSITION_TABLE_ID, MAX_ENERGY, PLAYER_BED_TABLE_ID } from "../core/constants.js";
 import DustBot from "../index.js";
 import { EntityId, Vec3 } from "../types";
-import { ethers } from "ethers";
 
 export class PlayerModule extends DustGameBase {
   private lastKnownPosition: Vec3 | null = null;
@@ -35,16 +36,11 @@ export class PlayerModule extends DustGameBase {
           process.exit(1);
         }
         
-        const spawnTilePosition = {
-          x: -400,
-          y: 73,
-          z: 492,
-        };
-
+        const config = await getOperationalConfig();
         try {
           const hash = await bot.movement.spawn(
-            process.env.SPAWN_TILE_ENTITY_ID!,
-            spawnTilePosition,
+            config.entities.spawnTile!,
+            config.areas.spawnTile,
             245280000000000000n
           );
           console.log("🎉 Character spawned successfully!");
@@ -114,10 +110,9 @@ export class PlayerModule extends DustGameBase {
     try {
       const playerId = entityId || this.characterEntityId;
       // PlayerBed table ID: "PlayerBed" -> hex encoded (WorldResourceIdLib format)
-      const playerBedTableId =
-        "0x74620000000000000000000000000000506c6179657242656400000000000000";
+      
 
-      const result = await this.getRecord(playerBedTableId, [playerId]);
+      const result = await this.getRecord(PLAYER_BED_TABLE_ID, [playerId]);
 
       if (!result.staticData || result.staticData === "0x") {
         console.log("😴 No bed data found - player is not sleeping");
@@ -172,9 +167,7 @@ export class PlayerModule extends DustGameBase {
   async getPlayerEnergy(entityId?: EntityId): Promise<string> {
     try {
       const playerId = entityId || this.characterEntityId;
-      const energyTableId =
-        "0x74620000000000000000000000000000456e6572677900000000000000000000";
-      const result = await this.getRecord(energyTableId, [playerId]);
+      const result = await this.getRecord(ENERGY_TABLE_ID, [playerId]);
       if (!result.staticData || result.staticData === "0x") {
         return "0";
       }
@@ -182,7 +175,6 @@ export class PlayerModule extends DustGameBase {
       const energyHex = result.staticData.slice(2);
       const energy = BigInt("0x" + energyHex.slice(32, 64));
       
-      const MAX_ENERGY = 817600000000000000n;
       const energyPercentage = Number(energy * 100n / MAX_ENERGY);
       
       return energy.toString();
@@ -196,11 +188,9 @@ export class PlayerModule extends DustGameBase {
     try {
       // EntityPosition table ID - this is likely how it's encoded in the Dust game
       // ResourceId format: bytes32 with encoded type and table name
-      const entityPositionTableId =
-        "0x74620000000000000000000000000000456e74697479506f736974696f6e0000";
-
+      
       // Call getRecord to get position data
-      const result = await this.getRecord(entityPositionTableId, [
+      const result = await this.getRecord(ENTITY_POSITION_TABLE_ID, [
         this.characterEntityId,
       ]);
 

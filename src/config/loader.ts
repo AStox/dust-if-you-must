@@ -40,7 +40,6 @@ export class ConfigLoader {
       configPath = "./config/operational.json",
       validateSchema = true,
       allowEnvironmentOverrides = true,
-      requireEnergizeAreas = false,
     } = options;
 
     try {
@@ -58,8 +57,7 @@ export class ConfigLoader {
       // Validate configuration if enabled
       if (validateSchema) {
         const validation = ConfigValidator.validate(
-          config,
-          requireEnergizeAreas
+          config
         );
         if (!validation.isValid) {
           const report = generateValidationReport(validation);
@@ -372,7 +370,6 @@ export class ConfigLoader {
    */
   private validateConfig(
     config: OperationalConfig,
-    requireEnergizeAreas: boolean
   ): ConfigValidationResult {
     const errors: string[] = [];
     const warnings: string[] = [];
@@ -415,7 +412,6 @@ export class ConfigLoader {
     }
 
     // Validate energize areas if required
-    if (requireEnergizeAreas) {
       if (!config.areas?.energize) {
         errors.push("Energize areas are required but not configured");
       } else {
@@ -433,7 +429,6 @@ export class ConfigLoader {
           );
         }
       }
-    }
 
     // Validate entity IDs
     if (config.entities?.chests) {

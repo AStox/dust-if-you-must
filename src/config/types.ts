@@ -42,7 +42,8 @@ export interface EnergizeAreas {
  */
 export interface OperationalAreas {
   farming: FarmingAreas;
-  energize?: EnergizeAreas; // Optional for configurations that only need farming
+  energize: EnergizeAreas; // Optional for configurations that only need farming
+  spawnTile: Position3D
 }
 
 /**
@@ -74,6 +75,7 @@ export interface GameEntities {
   chests: ChestEntities;
   forceFields?: ForceFieldEntities;
   powerStones?: PowerStoneEntities;
+  spawnTile?: EntityId;
 }
 
 /**
@@ -132,7 +134,6 @@ export interface ConfigLoadOptions {
   configPath?: string; // Path to config file (default: ./config/operational.json)
   validateSchema?: boolean; // Whether to validate against JSON schema (default: true)
   allowEnvironmentOverrides?: boolean; // Allow env var overrides (default: true)
-  requireEnergizeAreas?: boolean; // Whether energize areas are required (default: false)
 }
 
 /**

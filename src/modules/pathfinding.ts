@@ -324,9 +324,6 @@ export class PathfindingModule extends DustGameBase {
     this.chunkLoadingTimeInCurrentSearch = 0;
 
     console.log("=".repeat(60));
-    console.log(
-      `🎯 Starting A* pathfinding to (${target.x}, ${target.y}, ${target.z})`
-    );
 
     // Get current position
     const posStartTime = Date.now();
@@ -334,10 +331,6 @@ export class PathfindingModule extends DustGameBase {
     if (!currentPos) {
       throw new Error("Cannot determine current position");
     }
-
-    console.log(
-      `📍 Current position: (${currentPos.x}, ${currentPos.y}, ${currentPos.z})`
-    );
 
     // Calculate distance to determine heuristic weight
     const distance = Math.sqrt(
@@ -356,12 +349,8 @@ export class PathfindingModule extends DustGameBase {
       heuristicWeight = 1.75; // Slightly greedy
     }
 
-    console.log(`🎯 Target position: (${target.x}, ${target.y}, ${target.z})`);
-
     // Validate and adjust target if necessary
-    console.log(`🔍 STARTING TARGET VALIDATION...`);
     const adjustedTarget = await this.validateAndAdjustTarget(target);
-    console.log(`🔍 TARGET VALIDATION COMPLETE`);
     if (
       adjustedTarget.x !== target.x ||
       adjustedTarget.y !== target.y ||
