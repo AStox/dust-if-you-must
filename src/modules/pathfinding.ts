@@ -142,7 +142,19 @@ const PLAYER_RELATIVE_COORDS: Vec3[] = [
 ];
 
 // Debug coordinates - add specific coordinates you want to debug here
-const DEBUG_COORDINATES: Vec3[] = [];
+const DEBUG_COORDINATES: Vec3[] = [
+  // Ground path that should be obvious but isn't being chosen
+  { x: -404, y: 72, z: 489 },
+  { x: -410, y: 72, z: 489 },
+  { x: -420, y: 70, z: 489 },
+  { x: -430, y: 69, z: 489 },
+  { x: -440, y: 64, z: 489 },
+  { x: -443, y: 63, z: 489 },
+  // Add canopy coordinates for comparison (Y > 75)
+  { x: -410, y: 76, z: 489 },
+  { x: -420, y: 77, z: 489 },
+  { x: -430, y: 78, z: 489 },
+];
 
 interface BatchValidationResult {
   isValid: boolean;
@@ -181,6 +193,25 @@ export class PathfindingModule extends DustGameBase {
   // Dynamic chunk loading tracking for A* algorithm
   private chunkLoadingTimeInCurrentSearch = 0;
 
+  // Path analysis debugging
+  private pathChoices: Array<{
+    iteration: number;
+    position: Vec3;
+    alternatives: Array<{
+      neighbor: Vec3;
+      totalCost: number;
+      gCost: number;
+      hCost: number;
+      chosen: boolean;
+      costBreakdown: {
+        base: number;
+        physics: number;
+        terrain: number;
+        directional: number;
+      };
+    }>;
+  }> = [];
+
   // Clear block cache for fresh data each cycle
   clearCache(): void {
     this.blockDataCache.clear();
@@ -188,6 +219,7 @@ export class PathfindingModule extends DustGameBase {
     this.preloadedChunks.clear();
     this.cacheHits = 0;
     this.cacheMisses = 0;
+    this.pathChoices = [];
     console.log("🧹 Pathfinding cache cleared for fresh cycle");
   }
 
@@ -894,6 +926,21 @@ export class PathfindingModule extends DustGameBase {
       const neighborElapsed = Date.now() - neighborStartTime;
       totalNeighborTime += neighborElapsed;
 
+      // Track alternatives for this position (for path analysis)
+      const alternatives: Array<{
+        neighbor: Vec3;
+        totalCost: number;
+        gCost: number;
+        hCost: number;
+        chosen: boolean;
+        costBreakdown: {
+          base: number;
+          physics: number;
+          terrain: number;
+          directional: number;
+        };
+      }> = [];
+
       for (const neighbor of neighbors) {
         const neighborKey = `${neighbor.x},${neighbor.y},${neighbor.z}`;
 
@@ -908,6 +955,9 @@ export class PathfindingModule extends DustGameBase {
           neighbor
         );
 
+        // Debug logging for specific coordinates
+        const isDebugPos = isDebugCoordinate(neighbor) || isDebugCoordinate(currentNode.position);
+
         // Calculate physics-based penalties BEFORE checking if move is valid
         const dy = neighbor.y - currentNode.position.y;
         let physicsPenalty = 0;
@@ -916,18 +966,21 @@ export class PathfindingModule extends DustGameBase {
         if (dy > 0) {
           const jumpPenalty = Math.pow(currentNode.jumps + 1, 2) * 2.0; // Quadratic jump penalty
           physicsPenalty += jumpPenalty;
+          if (isDebugPos) console.log(`🦘 Jump penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): ${jumpPenalty}`);
         }
 
         // Penalty for high fall heights (dangerous territory)
         if (currentNode.fallHeight > 1) {
           const fallPenalty = currentNode.fallHeight * 3.0;
           physicsPenalty += fallPenalty;
+          if (isDebugPos) console.log(`⬇️ Fall penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): ${fallPenalty}`);
         }
 
         // Penalty for high move unit consumption (energy efficiency)
         if (currentNode.moveUnits > MAX_MOVE_UNITS_PER_BLOCK * 0.7) {
           const energyPenalty = 10.0; // High energy consumption penalty
           physicsPenalty += energyPenalty;
+          if (isDebugPos) console.log(`⚡ Energy penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): ${energyPenalty}`);
         }
 
         // Add movement type differentiation based on terrain
@@ -939,17 +992,25 @@ export class PathfindingModule extends DustGameBase {
           // Add extra cost for difficult terrain
           if (objectType?.name?.toLowerCase().includes("water")) {
             terrainPenalty += 2.0; // Swimming is slower
+            if (isDebugPos) console.log(`🌊 Water penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 2.0`);
           } else if (objectType?.name?.toLowerCase().includes("lava")) {
             terrainPenalty += 10.0; // Lava is very dangerous/expensive
+            if (isDebugPos) console.log(`🌋 Lava penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 10.0`);
           }
 
           // Slight preference for ground-level paths (Y <= 70 is typically ground level)
           if (neighbor.y > 75) {
             terrainPenalty += 1.0; // Mild penalty for high altitude (tree canopy)
+            if (isDebugPos) console.log(`🌳 Altitude penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 1.0 (Y=${neighbor.y})`);
+          }
+
+          if (isDebugPos) {
+            console.log(`🔍 Block at (${neighbor.x},${neighbor.y},${neighbor.z}): type=${blockType}, name=${objectType?.name || "Unknown"}, passThrough=${objectType?.passThrough}`);
           }
         } catch (error) {
           // If we can't get block type, add small penalty for uncertainty
           terrainPenalty += 0.5;
+          if (isDebugPos) console.log(`❓ Unknown block penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 0.5`);
         }
 
         // Add horizontal directional bias (x,z plane only) to favor moves toward target
@@ -1057,6 +1118,21 @@ export class PathfindingModule extends DustGameBase {
           );
         }
 
+        // Track this alternative for analysis
+        alternatives.push({
+          neighbor,
+          totalCost: fCost,
+          gCost,
+          hCost,
+          chosen: false, // Will be updated later
+          costBreakdown: {
+            base: baseMovementCost,
+            physics: physicsPenalty,
+            terrain: terrainPenalty,
+            directional: directionalBias,
+          },
+        });
+
         // Check if this path to neighbor is better
         const existingNode = openSet.find(
           (n) =>
@@ -1092,16 +1168,31 @@ export class PathfindingModule extends DustGameBase {
           let newFallHeight = currentNode.fallHeight;
           let newMoveUnits = currentNode.moveUnits;
 
-          // Physics state transitions based on smart contract logic
-          if (dy < 0 && currentNode.hasGravity) {
-            // For falls, increment fall height
-            newFallHeight++;
-            newGlides = 0; // Reset glides when falling
-
+          // FIRST: Reset physics state when landing on solid ground
+          // This must happen before any other physics checks
+          if (!neighborHasGravity) {
             if (isDebugNeighbor) {
               console.log(
-                `   📉 Fall detected - newFallHeight: ${newFallHeight}, newGlides reset to 0`
+                `   🎯 Landing on solid ground - resetting jumps(${newJumps}→0), glides(${newGlides}→0), fallHeight(${newFallHeight}→0)`
               );
+            }
+            newJumps = 0;
+            newGlides = 0;
+            newFallHeight = 0;
+          }
+
+          // Physics state transitions based on smart contract logic
+          if (dy < 0 && currentNode.hasGravity) {
+            // For falls, increment fall height (but only if not landing on solid ground)
+            if (neighborHasGravity) {
+              newFallHeight++;
+              newGlides = 0; // Reset glides when falling
+
+              if (isDebugNeighbor) {
+                console.log(
+                  `   📉 Fall detected - newFallHeight: ${newFallHeight}, newGlides reset to 0`
+                );
+              }
             }
 
             // SIMPLIFICATION RULE: Prevent dangerous falls > PLAYER_SAFE_FALL_DISTANCE = 3
@@ -1153,18 +1244,6 @@ export class PathfindingModule extends DustGameBase {
                 continue;
               }
             }
-          }
-
-          // Reset physics state when landing on solid ground
-          if (!neighborHasGravity) {
-            if (isDebugNeighbor) {
-              console.log(
-                `   🎯 Landing on solid ground - resetting jumps(${newJumps}→0), glides(${newGlides}→0), fallHeight(${newFallHeight}→0)`
-              );
-            }
-            newJumps = 0;
-            newGlides = 0;
-            newFallHeight = 0;
           }
 
           // Add move units based on movement type
@@ -1251,6 +1330,53 @@ export class PathfindingModule extends DustGameBase {
             existingNode.moveUnits = newMoveUnits;
           }
         }
+      }
+
+      // Track path choices at key decision points
+      if (alternatives.length > 1) {
+        // Find which alternative was actually chosen (lowest fCost that was added to openSet)
+        let chosenAlternative = null;
+        let lowestFCost = Infinity;
+        
+        for (const alt of alternatives) {
+          if (alt.totalCost < lowestFCost) {
+            lowestFCost = alt.totalCost;
+            chosenAlternative = alt;
+          }
+        }
+        
+        if (chosenAlternative) {
+          chosenAlternative.chosen = true;
+        }
+
+        // Log significant decision points where ground vs canopy paths diverge
+        const hasGroundOption = alternatives.some(alt => alt.neighbor.y <= 72);
+        const hasCanopyOption = alternatives.some(alt => alt.neighbor.y > 75);
+        
+        if (hasGroundOption && hasCanopyOption) {
+          console.log(`\n🔀 CRITICAL DECISION POINT at (${currentNode.position.x}, ${currentNode.position.y}, ${currentNode.position.z}):`);
+          
+          const groundOptions = alternatives.filter(alt => alt.neighbor.y <= 72);
+          const canopyOptions = alternatives.filter(alt => alt.neighbor.y > 75);
+          
+          console.log(`   Ground options (Y ≤ 72):`);
+          groundOptions.forEach(alt => {
+            console.log(`     → (${alt.neighbor.x}, ${alt.neighbor.y}, ${alt.neighbor.z}) - Cost: ${alt.totalCost.toFixed(2)} ${alt.chosen ? '✅ CHOSEN' : '❌'}`);
+            console.log(`       Base: ${alt.costBreakdown.base.toFixed(2)}, Physics: ${alt.costBreakdown.physics.toFixed(2)}, Terrain: ${alt.costBreakdown.terrain.toFixed(2)}, Directional: ${alt.costBreakdown.directional.toFixed(2)}`);
+          });
+          
+          console.log(`   Canopy options (Y > 75):`);
+          canopyOptions.forEach(alt => {
+            console.log(`     → (${alt.neighbor.x}, ${alt.neighbor.y}, ${alt.neighbor.z}) - Cost: ${alt.totalCost.toFixed(2)} ${alt.chosen ? '✅ CHOSEN' : '❌'}`);
+            console.log(`       Base: ${alt.costBreakdown.base.toFixed(2)}, Physics: ${alt.costBreakdown.physics.toFixed(2)}, Terrain: ${alt.costBreakdown.terrain.toFixed(2)}, Directional: ${alt.costBreakdown.directional.toFixed(2)}`);
+          });
+        }
+
+        this.pathChoices.push({
+          iteration: iterationCount,
+          position: currentNode.position,
+          alternatives
+        });
       }
 
       // Safety break for very long searches
