@@ -40,23 +40,7 @@ export class DustBot {
     this.player = new PlayerModule();
     this.world = new WorldModule();
     this.inventory = new InventoryModule();
-    this.state = {
-      location: "unknown",
-      position: { x: 0, y: 0, z: 0 },
-      energy: 0,
-      emptyBuckets: 0,
-      waterBuckets: 0,
-      wheatSeeds: 0,
-      wheat: 0,
-      slop: 0,
-      unwateredPlots: 0,
-      unseededPlots: 0,
-      ungrownPlots: 0,
-      unharvestedPlots: 0,
-      totalPlots: 0,
-      inventory: [],
-      chestInventory: [],
-    };
+    this.state = {} as BotState;
   }
 
   // Get wallet and character info

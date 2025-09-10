@@ -142,25 +142,72 @@ const PLAYER_RELATIVE_COORDS: Vec3[] = [
 ];
 
 // Debug coordinates - add specific coordinates you want to debug here
-const DEBUG_COORDINATES: Vec3[] = [
-  // Ground path that should be obvious but isn't being chosen
-  { x: -404, y: 72, z: 489 },
-  { x: -410, y: 72, z: 489 },
-  { x: -420, y: 70, z: 489 },
-  { x: -430, y: 69, z: 489 },
-  { x: -440, y: 64, z: 489 },
-  { x: -443, y: 63, z: 489 },
-  // Add canopy coordinates for comparison (Y > 75)
-  { x: -410, y: 76, z: 489 },
-  { x: -420, y: 77, z: 489 },
-  { x: -430, y: 78, z: 489 },
-];
+const DEBUG_COORDINATES: Vec3[] = [];
 
 interface BatchValidationResult {
   isValid: boolean;
   invalidCoordinate?: Vec3;
   reason?: string;
   coordinateIndex?: number;
+}
+
+// Debug visualization data structures
+interface NodePhysics {
+  jumps: number;
+  glides: number;
+  fallHeight: number;
+  hasGravity: boolean;
+  moveUnits: number;
+}
+
+interface CostBreakdown {
+  baseMovement: number;
+  physicsPenalty: number;
+  terrainPenalty: number;
+  directionalBias: number;
+  total: number;
+}
+
+interface ChunkLoadEvent {
+  iteration: number;
+  chunkCoord: Vec3;
+  blockCount: number;
+  loadTimeMs: number;
+}
+
+interface DebugStep {
+  iteration: number;
+  currentNode: Vec3;
+  openSet: Vec3[];
+  closedSet: Vec3[];
+  neighbors: Vec3[];
+  rejectedNeighbors: { position: Vec3; reason: string }[];
+  fCosts: { [key: string]: number };
+  gCosts: { [key: string]: number };
+  hCosts: { [key: string]: number };
+  physics: { [key: string]: NodePhysics };
+  costBreakdowns: { [key: string]: CostBreakdown };
+  newChunksLoaded: ChunkLoadEvent[];
+}
+
+interface WorldBlock {
+  position: Vec3;
+  blockType: number;
+  objectName?: string;
+  passThrough: boolean;
+}
+
+interface DebugData {
+  start: Vec3;
+  end: Vec3;
+  steps: DebugStep[];
+  finalPath: Vec3[] | null;
+  success: boolean;
+  iterations: number;
+  bounds: { minX: number; maxX: number; minY: number; maxY: number; minZ: number; maxZ: number };
+  worldBlocks: WorldBlock[];
+  chunkLoadHistory: ChunkLoadEvent[];
+  loadedChunks: Set<string>; // Track which chunks are loaded at any point
 }
 
 // Helper function to check if we should debug a specific coordinate
@@ -193,24 +240,14 @@ export class PathfindingModule extends DustGameBase {
   // Dynamic chunk loading tracking for A* algorithm
   private chunkLoadingTimeInCurrentSearch = 0;
 
-  // Path analysis debugging
-  private pathChoices: Array<{
-    iteration: number;
-    position: Vec3;
-    alternatives: Array<{
-      neighbor: Vec3;
-      totalCost: number;
-      gCost: number;
-      hCost: number;
-      chosen: boolean;
-      costBreakdown: {
-        base: number;
-        physics: number;
-        terrain: number;
-        directional: number;
-      };
-    }>;
-  }> = [];
+  // Debug visualization
+  private enableDebugVisualization = false;
+  private debugData: DebugData | null = null;
+  private debugWorldBlocks = new Set<string>(); // Track which blocks we've already recorded
+  private debugFileHandle: any = null; // File handle for streaming JSON
+  private debugFilename = '';
+  private isFirstStep = true;
+  private currentDebugIteration = 0; // Track current iteration for chunk loading
 
   // Clear block cache for fresh data each cycle
   clearCache(): void {
@@ -219,9 +256,120 @@ export class PathfindingModule extends DustGameBase {
     this.preloadedChunks.clear();
     this.cacheHits = 0;
     this.cacheMisses = 0;
-    this.pathChoices = [];
+
     console.log("🧹 Pathfinding cache cleared for fresh cycle");
   }
+
+  // Enable debug visualization mode
+  enableDebug(): void {
+    this.enableDebugVisualization = true;
+    console.log("🔧 Debug visualization enabled");
+  }
+
+  // Initialize debug data (call this before any chunk loading)
+  private async initializeDebugData(start: Vec3, end: Vec3): Promise<void> {
+    if (!this.enableDebugVisualization) return;
+    
+    // Create minimal in-memory debug data for bounds tracking
+    this.debugData = {
+      start,
+      end,
+      steps: [], // Keep empty - we'll stream to file
+      finalPath: null,
+      success: false,
+      iterations: 0,
+      bounds: { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, minZ: Infinity, maxZ: -Infinity },
+      worldBlocks: [],
+      chunkLoadHistory: [],
+      loadedChunks: new Set<string>()
+    };
+    this.debugWorldBlocks.clear();
+    this.isFirstStep = true;
+    
+    // Start streaming JSON file
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    this.debugFilename = `pathfinding-debug-${timestamp}.json`;
+    
+    const fs = await import('fs');
+    this.debugFileHandle = await fs.promises.open(this.debugFilename, 'w');
+    
+    // Write JSON header
+    await this.debugFileHandle.write(`{
+  "start": ${JSON.stringify(start, null, 2)},
+  "end": ${JSON.stringify(end, null, 2)},
+  "steps": [
+`);
+    
+    console.log(`🔧 Debug streaming to ${this.debugFilename}`);
+  }
+
+  // Finalize the streaming debug file
+  private async finalizeDebugFile(finalPath: Vec3[] | null): Promise<void> {
+    if (!this.debugFileHandle || !this.enableDebugVisualization || !this.debugData) return;
+    
+    try {
+      // Write JSON footer
+      await this.debugFileHandle.write(`
+  ],
+  "finalPath": ${JSON.stringify(finalPath, null, 2)},
+  "success": ${finalPath !== null},
+  "iterations": ${this.debugData.iterations},
+  "bounds": ${JSON.stringify(this.debugData.bounds, null, 2)},
+  "worldBlocks": ${JSON.stringify(this.debugData.worldBlocks, null, 2)},
+  "chunkLoadHistory": ${JSON.stringify(this.debugData.chunkLoadHistory, null, 2)}
+}`);
+      
+      await this.debugFileHandle.close();
+      this.debugFileHandle = null;
+      
+      console.log(`🔧 Debug visualization data streamed to ${this.debugFilename}`);
+      console.log(`   Open pathfinding-visualizer-3d.html and load this file to visualize the A* algorithm`);
+      console.log(`📊 Captured ALL ${this.debugData.iterations} iterations without memory issues`);
+    } catch (error) {
+      console.log(`⚠️ Failed to finalize debug data: ${error}`);
+    }
+  }
+
+  // Disable debug visualization mode
+  disableDebug(): void {
+    this.enableDebugVisualization = false;
+    this.debugData = null;
+    this.debugWorldBlocks.clear();
+    console.log("🔧 Debug visualization disabled");
+  }
+
+  // Get debug data for visualization
+  getDebugData(): DebugData | null {
+    return this.debugData;
+  }
+
+  // Legacy export method - now using streaming
+  async exportDebugData(filename: string = "pathfinding-debug.json"): Promise<void> {
+    console.log("📁 Debug data is now streamed directly to file during pathfinding");
+  }
+
+  // Record a world block for debug visualization (comprehensive)
+  private recordWorldBlockSync(position: Vec3, blockType: number, objectType: any): void {
+    if (!this.enableDebugVisualization || !this.debugData) return;
+    
+    const blockKey = `${position.x},${position.y},${position.z}`;
+    if (this.debugWorldBlocks.has(blockKey)) return; // Already recorded
+    
+    this.debugWorldBlocks.add(blockKey);
+    
+    // Record ALL blocks except air and passthrough blocks (blockType 1 = air, blockType 0 = void/nothing)
+    if (blockType === 1 || blockType === 0) return; // Skip air and void
+    if (objectType?.passThrough) return; // Skip passthrough blocks (visualized as air)
+    
+    this.debugData.worldBlocks.push({
+      position,
+      blockType,
+      objectName: objectType?.name || `BlockType_${blockType}`,
+      passThrough: false // Only non-passthrough blocks make it here
+    });
+  }
+
+
 
   // Validate target and adjust if necessary to find a valid standing position
   private async validateAndAdjustTarget(target: Vec3): Promise<Vec3> {
@@ -234,6 +382,8 @@ export class PathfindingModule extends DustGameBase {
       // Check if target block is passthrough
       const targetBlockType = await this.world.getBlockType(target);
       const targetObjectType = ObjectTypes[targetBlockType];
+      
+      // Target block will be recorded when chunks are loaded
       console.log(
         `🔍 Target block type: ${targetBlockType} (${
           targetObjectType?.name || "Unknown"
@@ -348,6 +498,9 @@ export class PathfindingModule extends DustGameBase {
   async pathTo(target: Vec3): Promise<Vec3[]> {
     const startTime = Date.now();
 
+    // Enable debug visualization for all pathfinding calls
+    this.enableDebug();
+
     // Reset cache performance tracking for this run
     this.cacheHits = 0;
     this.cacheMisses = 0;
@@ -364,6 +517,9 @@ export class PathfindingModule extends DustGameBase {
       throw new Error("Cannot determine current position");
     }
 
+    // Initialize debug data early (before chunk loading)
+    await this.initializeDebugData(currentPos, target);
+
     // Calculate distance to determine heuristic weight
     const distance = Math.sqrt(
       Math.pow(target.x - currentPos.x, 2) +
@@ -374,11 +530,11 @@ export class PathfindingModule extends DustGameBase {
     // Determine heuristic weight based on distance (more greedy for longer distances)
     let heuristicWeight = 1.0; // Default A*
     if (distance > 200) {
-      heuristicWeight = 5.0; // Very greedy for long distances
+      heuristicWeight = 10.0; // Very aggressive for long distances
     } else if (distance > 50) {
-      heuristicWeight = 2.5; // Moderately greedy
+      heuristicWeight = 6.0; // Aggressive for medium distances
     } else {
-      heuristicWeight = 1.75; // Slightly greedy
+      heuristicWeight = 4.0; // Aggressive for short distances
     }
 
     // Validate and adjust target if necessary
@@ -445,6 +601,9 @@ export class PathfindingModule extends DustGameBase {
     console.log(`📦 Block cache size: ${this.blockDataCache.size} blocks`);
     console.log("-".repeat(60));
 
+    // Finalize debug data file
+    await this.finalizeDebugFile(path);
+
     return path;
   }
 
@@ -468,18 +627,57 @@ export class PathfindingModule extends DustGameBase {
         z: startChunk.z * this.CHUNK_SIZE,
       });
 
-      // Copy all blocks to our cache
+      // Copy all blocks to our cache and record terrain
+      console.log(`🚀 DEBUG: About to process ${chunkBlocks.size} blocks from starting chunk`);
+      console.log(`🚀 DEBUG: Debug visualization enabled: ${this.enableDebugVisualization}`);
+      console.log(`🚀 DEBUG: Debug data exists: ${!!this.debugData}`);
+      
+      let blocksRecorded = 0;
       for (const [key, value] of chunkBlocks) {
         this.blockDataCache.set(key, value);
+        
+        // Record terrain for debug visualization directly during cache population
+        if (this.enableDebugVisualization && this.debugData) {
+          const coords = key.split(',').map(Number);
+          const blockPos = { x: coords[0], y: coords[1], z: coords[2] };
+          const objectType = ObjectTypes[value.blockType];
+          
+          // Debug log first few blocks
+          if (blocksRecorded < 5) {
+            console.log(`🧱 Block (${blockPos.x}, ${blockPos.y}, ${blockPos.z}): Type=${value.blockType}, Name=${objectType?.name}, PassThrough=${objectType?.passThrough}`);
+          }
+          
+          this.recordWorldBlockSync(blockPos, value.blockType, objectType);
+          
+          // Count non-air, non-passthrough blocks
+          if (value.blockType !== 0 && value.blockType !== 1 && !objectType?.passThrough) {
+            blocksRecorded++;
+          }
+        }
       }
 
       // Track this chunk as loaded
       const chunkKey = `${startChunk.x},${startChunk.y},${startChunk.z}`;
       this.preloadedChunks.add(chunkKey);
 
+      // Record initial chunk loading event  
+      if (this.enableDebugVisualization && this.debugData) {
+        this.debugData.loadedChunks.add(chunkKey);
+        this.debugData.chunkLoadHistory.push({
+          iteration: 0, // Initial chunk loaded at iteration 0
+          chunkCoord: startChunk,
+          blockCount: chunkBlocks.size,
+          loadTimeMs: 0 // Initial load time not tracked
+        });
+      }
+
       console.log(
-        `✅ Successfully loaded starting chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z})`
+        `✅ Successfully loaded starting chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z}) - ${blocksRecorded} solid blocks recorded`
       );
+      
+      if (this.enableDebugVisualization && this.debugData) {
+        console.log(`📊 Total terrain blocks in debug data: ${this.debugData.worldBlocks.length}`);
+      }
     } catch (error) {
       console.error(
         `❌ Failed to load starting chunk (${startChunk.x}, ${startChunk.y}, ${startChunk.z}): ${error}`
@@ -728,9 +926,17 @@ export class PathfindingModule extends DustGameBase {
         z: chunkCoord.z * this.CHUNK_SIZE,
       });
 
-      // Copy all blocks to our cache
+      // Copy all blocks to our cache and record terrain
       for (const [key, value] of chunkBlocks) {
         this.blockDataCache.set(key, value);
+        
+        // Record terrain for debug visualization directly during cache population
+        if (this.enableDebugVisualization && this.debugData) {
+          const coords = key.split(',').map(Number);
+          const blockPos = { x: coords[0], y: coords[1], z: coords[2] };
+          const objectType = ObjectTypes[value.blockType];
+          this.recordWorldBlockSync(blockPos, value.blockType, objectType);
+        }
       }
 
       // Track this chunk as loaded
@@ -738,6 +944,17 @@ export class PathfindingModule extends DustGameBase {
 
       const loadTime = Date.now() - loadStartTime;
       this.chunkLoadingTimeInCurrentSearch += loadTime;
+
+      // Record dynamic chunk loading event
+      if (this.enableDebugVisualization && this.debugData) {
+        this.debugData.loadedChunks.add(chunkKey);
+        this.debugData.chunkLoadHistory.push({
+          iteration: this.currentDebugIteration,
+          chunkCoord: chunkCoord,
+          blockCount: chunkBlocks.size,
+          loadTimeMs: loadTime
+        });
+      }
 
       console.log(
         `✅ Loaded chunk (${chunkCoord.x}, ${chunkCoord.y}, ${chunkCoord.z}) with ${chunkBlocks.size} blocks in ${loadTime}ms`
@@ -759,6 +976,8 @@ export class PathfindingModule extends DustGameBase {
     console.log(
       `🔍 Running A* pathfinding with ${heuristicWeight}x heuristic weight...`
     );
+
+    // Debug data should already be initialized in pathTo method
 
     // Calculate distance and set dynamic iteration limit
     const distance = Math.sqrt(
@@ -833,6 +1052,7 @@ export class PathfindingModule extends DustGameBase {
 
     while (openSet.length > 0) {
       iterationCount++;
+      this.currentDebugIteration = iterationCount;
 
       // Log progress every 10 iterations
       if (iterationCount % 100 === 0) {
@@ -917,7 +1137,14 @@ export class PathfindingModule extends DustGameBase {
           );
         });
 
-        return this.reconstructPath(currentNode);
+        const finalPath = this.reconstructPath(currentNode);
+        
+        // Update debug data on success
+        if (this.enableDebugVisualization && this.debugData) {
+          this.debugData.iterations = iterationCount;
+        }
+        
+        return finalPath;
       }
 
       // Get neighbors (with integrated validation)
@@ -926,27 +1153,68 @@ export class PathfindingModule extends DustGameBase {
       const neighborElapsed = Date.now() - neighborStartTime;
       totalNeighborTime += neighborElapsed;
 
-      // Track alternatives for this position (for path analysis)
-      const alternatives: Array<{
-        neighbor: Vec3;
-        totalCost: number;
-        gCost: number;
-        hCost: number;
-        chosen: boolean;
-        costBreakdown: {
-          base: number;
-          physics: number;
-          terrain: number;
-          directional: number;
-        };
-      }> = [];
 
+
+      // Track rejected neighbors for debug
+      const currentIterationRejected: { position: Vec3; reason: string }[] = [];
+      
       for (const neighbor of neighbors) {
         const neighborKey = `${neighbor.x},${neighbor.y},${neighbor.z}`;
 
         // Skip if already processed
         if (closedSet.has(neighborKey)) {
+          if (this.enableDebugVisualization) {
+            currentIterationRejected.push({ position: neighbor, reason: "Already in closed set" });
+          }
           continue;
+        }
+
+        // Dynamic search cone: Filter neighbors based on angle to target
+        // Tighter cone when far away, wider cone when close
+        const distanceToTarget = this.calculateHeuristic(currentNode.position, end);
+        let maxConeAngle: number;
+        
+        if (distanceToTarget > 100) {
+          maxConeAngle = Math.PI / 12; // 15 degrees - extremely tight cone for far distances
+        } else if (distanceToTarget > 30) {
+          maxConeAngle = Math.PI / 6; // 30 degrees - tight cone for medium distances
+        } else if (distanceToTarget > 10) {
+          maxConeAngle = Math.PI / 3; // 60 degrees - wider cone for close distances
+        } else {
+          maxConeAngle = Math.PI; // No cone restriction when very close (< 10 blocks)
+        }
+
+        // Calculate angle between neighbor direction and target direction (2D horizontal only)
+        const toTarget = {
+          x: end.x - currentNode.position.x,
+          z: end.z - currentNode.position.z
+        };
+        const toNeighbor = {
+          x: neighbor.x - currentNode.position.x,
+          z: neighbor.z - currentNode.position.z
+        };
+
+        // Skip cone check if we're moving vertically to allow climbing/falling
+        const verticalMove = neighbor.y - currentNode.position.y;
+        if (verticalMove === 0 && maxConeAngle < Math.PI) {
+          const targetMagnitude = Math.sqrt(toTarget.x * toTarget.x + toTarget.z * toTarget.z);
+          const neighborMagnitude = Math.sqrt(toNeighbor.x * toNeighbor.x + toNeighbor.z * toNeighbor.z);
+          
+          if (targetMagnitude > 0 && neighborMagnitude > 0) {
+            const dotProduct = (toTarget.x * toNeighbor.x + toTarget.z * toNeighbor.z) / (targetMagnitude * neighborMagnitude);
+            const angle = Math.acos(Math.max(-1, Math.min(1, dotProduct))); // Clamp to avoid NaN
+            
+            if (angle > maxConeAngle) {
+              // Skip this neighbor - outside search cone
+              if (this.enableDebugVisualization) {
+                currentIterationRejected.push({ 
+                  position: neighbor, 
+                  reason: `Outside search cone (angle: ${(angle * 180 / Math.PI).toFixed(1)}° > ${(maxConeAngle * 180 / Math.PI).toFixed(1)}°)`
+                });
+              }
+              continue;
+            }
+          }
         }
 
         // Calculate costs with heuristic weighting and physics penalties
@@ -954,9 +1222,6 @@ export class PathfindingModule extends DustGameBase {
           currentNode.position,
           neighbor
         );
-
-        // Debug logging for specific coordinates
-        const isDebugPos = isDebugCoordinate(neighbor) || isDebugCoordinate(currentNode.position);
 
         // Calculate physics-based penalties BEFORE checking if move is valid
         const dy = neighbor.y - currentNode.position.y;
@@ -966,21 +1231,18 @@ export class PathfindingModule extends DustGameBase {
         if (dy > 0) {
           const jumpPenalty = Math.pow(currentNode.jumps + 1, 2) * 2.0; // Quadratic jump penalty
           physicsPenalty += jumpPenalty;
-          if (isDebugPos) console.log(`🦘 Jump penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): ${jumpPenalty}`);
         }
 
         // Penalty for high fall heights (dangerous territory)
         if (currentNode.fallHeight > 1) {
           const fallPenalty = currentNode.fallHeight * 3.0;
           physicsPenalty += fallPenalty;
-          if (isDebugPos) console.log(`⬇️ Fall penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): ${fallPenalty}`);
         }
 
         // Penalty for high move unit consumption (energy efficiency)
         if (currentNode.moveUnits > MAX_MOVE_UNITS_PER_BLOCK * 0.7) {
           const energyPenalty = 10.0; // High energy consumption penalty
           physicsPenalty += energyPenalty;
-          if (isDebugPos) console.log(`⚡ Energy penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): ${energyPenalty}`);
         }
 
         // Add movement type differentiation based on terrain
@@ -992,25 +1254,17 @@ export class PathfindingModule extends DustGameBase {
           // Add extra cost for difficult terrain
           if (objectType?.name?.toLowerCase().includes("water")) {
             terrainPenalty += 2.0; // Swimming is slower
-            if (isDebugPos) console.log(`🌊 Water penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 2.0`);
           } else if (objectType?.name?.toLowerCase().includes("lava")) {
             terrainPenalty += 10.0; // Lava is very dangerous/expensive
-            if (isDebugPos) console.log(`🌋 Lava penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 10.0`);
           }
 
           // Slight preference for ground-level paths (Y <= 70 is typically ground level)
           if (neighbor.y > 75) {
             terrainPenalty += 1.0; // Mild penalty for high altitude (tree canopy)
-            if (isDebugPos) console.log(`🌳 Altitude penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 1.0 (Y=${neighbor.y})`);
-          }
-
-          if (isDebugPos) {
-            console.log(`🔍 Block at (${neighbor.x},${neighbor.y},${neighbor.z}): type=${blockType}, name=${objectType?.name || "Unknown"}, passThrough=${objectType?.passThrough}`);
           }
         } catch (error) {
           // If we can't get block type, add small penalty for uncertainty
           terrainPenalty += 0.5;
-          if (isDebugPos) console.log(`❓ Unknown block penalty at (${neighbor.x},${neighbor.y},${neighbor.z}): 0.5`);
         }
 
         // Add horizontal directional bias (x,z plane only) to favor moves toward target
@@ -1049,9 +1303,9 @@ export class PathfindingModule extends DustGameBase {
           } else if (dotProduct > 0.5) {
             directionalBias = -5.0; // Some alignment - small bonus
           } else if (dotProduct > 0) {
-            directionalBias = 10.0; // Slight alignment - small penalty
+            directionalBias = 25.0; // Slight alignment - moderate penalty
           } else {
-            directionalBias = 50.0; // Moving away from target - big penalty
+            directionalBias = 200.0; // Moving away from target - massive penalty
           }
         }
 
@@ -1118,20 +1372,7 @@ export class PathfindingModule extends DustGameBase {
           );
         }
 
-        // Track this alternative for analysis
-        alternatives.push({
-          neighbor,
-          totalCost: fCost,
-          gCost,
-          hCost,
-          chosen: false, // Will be updated later
-          costBreakdown: {
-            base: baseMovementCost,
-            physics: physicsPenalty,
-            terrain: terrainPenalty,
-            directional: directionalBias,
-          },
-        });
+
 
         // Check if this path to neighbor is better
         const existingNode = openSet.find(
@@ -1198,10 +1439,12 @@ export class PathfindingModule extends DustGameBase {
             // SIMPLIFICATION RULE: Prevent dangerous falls > PLAYER_SAFE_FALL_DISTANCE = 3
             // Check if this would create a dangerous fall when landing
             if (!neighborHasGravity && newFallHeight > 3) {
+              const reason = `Dangerous fall landing (height: ${newFallHeight} > 3)`;
               if (isDebugNeighbor) {
-                console.log(
-                  `   ❌ REJECTED: Dangerous fall landing - fallHeight ${newFallHeight} > 3 (PLAYER_SAFE_FALL_DISTANCE)`
-                );
+                console.log(`   ❌ REJECTED: ${reason}`);
+              }
+              if (this.enableDebugVisualization) {
+                currentIterationRejected.push({ position: neighbor, reason });
               }
               // This neighbor would result in landing after a dangerous fall - skip it
               continue;
@@ -1217,10 +1460,12 @@ export class PathfindingModule extends DustGameBase {
 
               // SMART CONTRACT CONSTRAINT: Enforce MAX_PLAYER_JUMPS = 3
               if (newJumps > 3) {
+                const reason = `Too many jumps (${newJumps} > 3)`;
                 if (isDebugNeighbor) {
-                  console.log(
-                    `   ❌ REJECTED: Too many jumps - ${newJumps} > 3 (MAX_PLAYER_JUMPS)`
-                  );
+                  console.log(`   ❌ REJECTED: ${reason}`);
+                }
+                if (this.enableDebugVisualization) {
+                  currentIterationRejected.push({ position: neighbor, reason });
                 }
                 // Skip this neighbor - exceeds jump limit
                 continue;
@@ -1235,10 +1480,12 @@ export class PathfindingModule extends DustGameBase {
 
               // SMART CONTRACT CONSTRAINT: Enforce MAX_PLAYER_GLIDES = 10
               if (newGlides > 10) {
+                const reason = `Too many glides (${newGlides} > 10)`;
                 if (isDebugNeighbor) {
-                  console.log(
-                    `   ❌ REJECTED: Too many glides - ${newGlides} > 10 (MAX_PLAYER_GLIDES)`
-                  );
+                  console.log(`   ❌ REJECTED: ${reason}`);
+                }
+                if (this.enableDebugVisualization) {
+                  currentIterationRejected.push({ position: neighbor, reason });
                 }
                 // Skip this neighbor - exceeds glide limit
                 continue;
@@ -1272,20 +1519,9 @@ export class PathfindingModule extends DustGameBase {
             }
           }
 
-          // Check move unit limit constraint
-          if (newMoveUnits > MAX_MOVE_UNITS_PER_BLOCK) {
-            if (isDebugNeighbor) {
-              console.log(
-                `   ⚠️ MOVE UNIT LIMIT REACHED - ${newMoveUnits} > ${MAX_MOVE_UNITS_PER_BLOCK} (MAX_MOVE_UNITS_PER_BLOCK)`
-              );
-              console.log(
-                `   🚀 PARTIAL PATH STRATEGY: Will return best path found so far and continue from new position`
-              );
-            }
-            // Instead of rejecting, mark that we've hit the move unit limit
-            // The pathfinding will return the best partial path found so far
-            continue;
-          }
+          // Note: Removed move unit limit check from pathfinding
+          // Move units are an execution constraint, not a pathfinding constraint
+          // Let A* find the optimal complete path, then chunk it during execution
 
           const neighborNode: PathNode = {
             position: neighbor,
@@ -1332,51 +1568,88 @@ export class PathfindingModule extends DustGameBase {
         }
       }
 
-      // Track path choices at key decision points
-      if (alternatives.length > 1) {
-        // Find which alternative was actually chosen (lowest fCost that was added to openSet)
-        let chosenAlternative = null;
-        let lowestFCost = Infinity;
-        
-        for (const alt of alternatives) {
-          if (alt.totalCost < lowestFCost) {
-            lowestFCost = alt.totalCost;
-            chosenAlternative = alt;
-          }
-        }
-        
-        if (chosenAlternative) {
-          chosenAlternative.chosen = true;
-        }
+      // Collect debug data if enabled
+      if (this.enableDebugVisualization && this.debugData) {
+        // Update bounds
+        const pos = currentNode.position;
+        this.debugData.bounds.minX = Math.min(this.debugData.bounds.minX, pos.x);
+        this.debugData.bounds.maxX = Math.max(this.debugData.bounds.maxX, pos.x);
+        this.debugData.bounds.minY = Math.min(this.debugData.bounds.minY, pos.y);
+        this.debugData.bounds.maxY = Math.max(this.debugData.bounds.maxY, pos.y);
+        this.debugData.bounds.minZ = Math.min(this.debugData.bounds.minZ, pos.z);
+        this.debugData.bounds.maxZ = Math.max(this.debugData.bounds.maxZ, pos.z);
 
-        // Log significant decision points where ground vs canopy paths diverge
-        const hasGroundOption = alternatives.some(alt => alt.neighbor.y <= 72);
-        const hasCanopyOption = alternatives.some(alt => alt.neighbor.y > 75);
-        
-        if (hasGroundOption && hasCanopyOption) {
-          console.log(`\n🔀 CRITICAL DECISION POINT at (${currentNode.position.x}, ${currentNode.position.y}, ${currentNode.position.z}):`);
+        // Smart sampling: capture key moments without huge file sizes
+        const shouldCapture = 
+          iterationCount <= 100 || // First 100 iterations (critical early decisions)
+          iterationCount % 50 === 0 || // Every 50th iteration (progress tracking)
+          (iterationCount > 9000 && iterationCount % 10 === 0) || // More detail near end
+          neighbors.length === 0; // Stuck situations (important for debugging)
           
-          const groundOptions = alternatives.filter(alt => alt.neighbor.y <= 72);
-          const canopyOptions = alternatives.filter(alt => alt.neighbor.y > 75);
+        if (this.debugFileHandle && shouldCapture) {
+          // Track rejected neighbors during this iteration
+          const rejectedNeighbors: { position: Vec3; reason: string }[] = [];
           
-          console.log(`   Ground options (Y ≤ 72):`);
-          groundOptions.forEach(alt => {
-            console.log(`     → (${alt.neighbor.x}, ${alt.neighbor.y}, ${alt.neighbor.z}) - Cost: ${alt.totalCost.toFixed(2)} ${alt.chosen ? '✅ CHOSEN' : '❌'}`);
-            console.log(`       Base: ${alt.costBreakdown.base.toFixed(2)}, Physics: ${alt.costBreakdown.physics.toFixed(2)}, Terrain: ${alt.costBreakdown.terrain.toFixed(2)}, Directional: ${alt.costBreakdown.directional.toFixed(2)}`);
-          });
-          
-          console.log(`   Canopy options (Y > 75):`);
-          canopyOptions.forEach(alt => {
-            console.log(`     → (${alt.neighbor.x}, ${alt.neighbor.y}, ${alt.neighbor.z}) - Cost: ${alt.totalCost.toFixed(2)} ${alt.chosen ? '✅ CHOSEN' : '❌'}`);
-            console.log(`       Base: ${alt.costBreakdown.base.toFixed(2)}, Physics: ${alt.costBreakdown.physics.toFixed(2)}, Terrain: ${alt.costBreakdown.terrain.toFixed(2)}, Directional: ${alt.costBreakdown.directional.toFixed(2)}`);
-          });
-        }
+          // Track chunks loaded this iteration
+          const newChunksThisIteration = this.debugData.chunkLoadHistory.filter(
+            chunk => chunk.iteration === iterationCount
+          );
+          // Limit data size by only tracking best nodes and current neighbors
+          const maxNodesPerSet = 20; // Limit to prevent huge files
+          const fCosts: { [key: string]: number } = {};
+          const gCosts: { [key: string]: number } = {};
+          const hCosts: { [key: string]: number } = {};
+          const physics: { [key: string]: NodePhysics } = {};
 
-        this.pathChoices.push({
-          iteration: iterationCount,
-          position: currentNode.position,
-          alternatives
-        });
+          // Track only the best nodes from open set (lowest F-cost)
+          const bestOpenNodes = openSet
+            .sort((a, b) => a.fCost - b.fCost)
+            .slice(0, maxNodesPerSet);
+            
+          bestOpenNodes.forEach(node => {
+            const key = `${node.position.x},${node.position.y},${node.position.z}`;
+            fCosts[key] = node.fCost;
+            gCosts[key] = node.gCost;
+            hCosts[key] = node.hCost;
+            physics[key] = {
+              jumps: node.jumps,
+              glides: node.glides,
+              fallHeight: node.fallHeight,
+              hasGravity: node.hasGravity,
+              moveUnits: node.moveUnits
+            };
+          });
+
+          // Also track current neighbors (always important)
+          neighbors.slice(0, 10).forEach(neighbor => {
+            const key = `${neighbor.x},${neighbor.y},${neighbor.z}`;
+            // Add neighbor data if not already tracked
+          });
+
+          const stepData = {
+            iteration: iterationCount,
+            currentNode: currentNode.position,
+            openSet: bestOpenNodes.map(n => n.position),
+            closedSet: Array.from(closedSet).slice(0, 50).map(key => { // Limit closed set size
+              const [x, y, z] = key.split(',').map(Number);
+              return { x, y, z };
+            }),
+            neighbors: neighbors.slice(0, 10), // Limit neighbors
+            rejectedNeighbors: currentIterationRejected,
+            fCosts,
+            gCosts,
+            hCosts,
+            physics,
+            costBreakdowns: {}, // Empty for now
+            newChunksLoaded: newChunksThisIteration
+          };
+
+          // Stream this step to file
+          const stepJson = JSON.stringify(stepData, null, 2);
+          const prefix = this.isFirstStep ? '' : ',\n';
+          await this.debugFileHandle.write(`${prefix}${stepJson}`);
+          this.isFirstStep = false;
+        }
       }
 
       // Safety break for very long searches
@@ -1539,6 +1812,11 @@ export class PathfindingModule extends DustGameBase {
       } catch (error) {
         console.log(`❌ Error analyzing neighbors: ${error}`);
       }
+    }
+
+    // Update debug data on failure
+    if (this.enableDebugVisualization && this.debugData) {
+      this.debugData.iterations = iterationCount;
     }
 
     return null;

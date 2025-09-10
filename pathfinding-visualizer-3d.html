@@ -1,0 +1,1216 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D A* Pathfinding Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background: #1a1a1a;
+            color: #fff;
+            overflow: hidden;
+        }
+        
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+        
+        .controls {
+            width: 320px;
+            padding: 20px;
+            background: #2d2d2d;
+            overflow-y: auto;
+            border-right: 2px solid #444;
+        }
+        
+        .visualization {
+            flex: 1;
+            position: relative;
+        }
+        
+        .file-input {
+            margin-bottom: 20px;
+        }
+        
+        .file-input input[type="file"] {
+            width: 100%;
+            padding: 10px;
+            background: #3d3d3d;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+        }
+        
+        .info-panel {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: #3d3d3d;
+            border-radius: 6px;
+            font-size: 12px;
+            line-height: 1.4;
+        }
+        
+        .iteration-controls {
+            margin-bottom: 20px;
+        }
+        
+        .iteration-controls input[type="range"] {
+            width: 100%;
+            margin: 10px 0;
+        }
+        
+        .iteration-controls button {
+            width: 48%;
+            padding: 8px;
+            background: #4CAF50;
+            border: none;
+            border-radius: 4px;
+            color: white;
+            cursor: pointer;
+            margin: 2px 1%;
+            font-size: 12px;
+        }
+        
+        .iteration-controls button:hover {
+            background: #45a049;
+        }
+        
+        .iteration-controls button:disabled {
+            background: #666;
+            cursor: not-allowed;
+        }
+        
+        .view-controls {
+            margin-bottom: 20px;
+        }
+        
+        .view-controls label {
+            display: block;
+            margin: 8px 0;
+            font-size: 12px;
+        }
+        
+        .view-controls select, .view-controls input {
+            width: 100%;
+            padding: 6px;
+            background: #3d3d3d;
+            border: 1px solid #555;
+            border-radius: 4px;
+            color: #fff;
+            font-size: 12px;
+        }
+        
+        .legend {
+            font-size: 11px;
+        }
+        
+        .legend h3 {
+            margin: 0 0 10px 0;
+            color: #4CAF50;
+        }
+        
+        .legend-item {
+            display: flex;
+            align-items: center;
+            margin: 6px 0;
+        }
+        
+        .legend-color {
+            width: 14px;
+            height: 14px;
+            margin-right: 8px;
+            border: 1px solid #555;
+            border-radius: 2px;
+        }
+        
+        .camera-info {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 10px;
+            border-radius: 4px;
+            font-size: 11px;
+            color: #ccc;
+        }
+        
+        .loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(0,0,0,0.8);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        
+        .no-data {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #888;
+        }
+        
+        #canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="controls">
+            <h2>3D A* Pathfinding Visualizer</h2>
+            
+            <div class="file-input">
+                <label>Load Debug Data:</label>
+                <input type="file" id="fileInput" accept=".json">
+            </div>
+            
+            <div class="info-panel" id="infoPanel">
+                <div>No data loaded</div>
+            </div>
+            
+            <div class="iteration-controls" id="iterationControls" style="display: none;">
+                <label>Iteration: <span id="iterationLabel">0</span></label>
+                <input type="range" id="iterationSlider" min="0" max="0" value="0">
+                <div>
+                    <button id="playPause">Play</button>
+                    <button id="reset">Reset</button>
+                </div>
+                <div>
+                    <button id="stepBack">◀ Step</button>
+                    <button id="stepForward">Step ▶</button>
+                </div>
+                <div style="margin-top: 10px;">
+                    <button id="resetCamera">Reset Camera</button>
+                </div>
+            </div>
+            
+            <div class="view-controls" id="viewControls" style="display: none;">
+                <label>
+                    <input type="checkbox" id="showCosts"> Show F-Costs
+                </label>
+
+                <label>
+                    <input type="checkbox" id="showPath" checked> Show Path
+                </label>
+                <label>
+                    <input type="checkbox" id="showTerrain" checked> Show Terrain
+                </label>
+                <label>
+                    Terrain Opacity: <span id="opacityLabel">60%</span>
+                    <input type="range" id="terrainOpacity" min="0" max="100" value="60" style="width: 100%; margin-top: 5px;">
+                </label>
+                <label>
+                    Cube Size:
+                    <select id="cubeSize">
+                        <option value="0.3">Small</option>
+                        <option value="0.4" selected>Medium</option>
+                        <option value="0.5">Large</option>
+                    </select>
+                </label>
+                <label>
+                    Animation Speed:
+                    <select id="animSpeed">
+                        <option value="200">Fast</option>
+                        <option value="500" selected>Medium</option>
+                        <option value="1000">Slow</option>
+                    </select>
+                </label>
+            </div>
+            
+            <div class="legend">
+                <h3>Legend</h3>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #00ff00;"></div>
+                    Start Position
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ff0000;"></div>
+                    End Position
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ffff00;"></div>
+                    Current Node
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #87ceeb;"></div>
+                    Open Set
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ff6b6b;"></div>
+                    Closed Set
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #ffa500;"></div>
+                    Current Neighbors
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #dc143c;"></div>
+                    Rejected Neighbors
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #9370db;"></div>
+                    Final Path
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #8B4513;"></div>
+                    Solid Blocks
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #4169E1;"></div>
+                    Water Blocks
+                </div>
+                <div class="legend-item">
+                    <div class="legend-color" style="background: #FF4500;"></div>
+                    Lava Blocks
+                </div>
+            </div>
+            
+            <div style="margin-top: 20px; font-size: 10px; color: #888;">
+                <strong>FPS Controls:</strong><br>
+                • Mouse: Look around (rotate view)<br>
+                • WASD/Arrow keys: Move camera<br>
+                • Q/E: Ascend/Descend camera<br>
+                • Click cube: Show details
+            </div>
+        </div>
+        
+        <div class="visualization">
+            <canvas id="canvas"></canvas>
+            <div class="camera-info" id="cameraInfo">
+                Camera: Ready
+            </div>
+            <div class="camera-info" id="clickInfo" style="top: 100px; background: rgba(0,0,0,0.95); display: none; width: 250px; font-size: 11px; line-height: 1.3;">
+                <strong>Clicked Object:</strong><br>
+                <div id="clickDetails">Click a cube for details</div>
+            </div>
+            <div class="no-data" id="noData">
+                Load a pathfinding debug JSON file to start 3D visualization
+            </div>
+            <div class="loading" id="loading" style="display: none;">
+                Loading 3D scene...
+            </div>
+        </div>
+    </div>
+
+    <!-- Three.js CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+    
+    <script>
+        class Pathfinding3DVisualizer {
+            constructor() {
+                this.data = null;
+                this.currentIteration = 0;
+                this.isPlaying = false;
+                this.playInterval = null;
+                this.showCosts = false;
+                this.showPath = true;
+                this.showTerrain = true;
+                this.terrainOpacity = 0.6;
+                this.cubeSize = 0.4;
+                this.animSpeed = 500;
+                
+                // Three.js objects
+                this.scene = null;
+                this.camera = null;
+                this.renderer = null;
+                this.controls = null;
+                this.cubes = new Map(); // position key -> cube mesh
+                this.terrainInstances = new Map(); // type -> instanced mesh
+                this.terrainPositions = new Map(); // position key -> terrain data
+                this.pathLine = null;
+                this.gridHelper = null;
+                
+                // Camera state for reset
+                this.initialCameraPosition = null;
+                this.initialCameraTarget = null;
+                
+                // Keyboard controls
+                this.keys = {
+                    w: false, a: false, s: false, d: false, q: false, e: false,
+                    ArrowUp: false, ArrowLeft: false, ArrowDown: false, ArrowRight: false
+                };
+                
+                this.initThreeJS();
+                this.initEventListeners();
+            }
+            
+            initThreeJS() {
+                const canvas = document.getElementById('canvas');
+                const container = canvas.parentElement;
+                
+                // Scene
+                this.scene = new THREE.Scene();
+                this.scene.background = new THREE.Color(0x1a1a1a);
+                
+                // Camera
+                this.camera = new THREE.PerspectiveCamera(
+                    75,
+                    container.clientWidth / container.clientHeight,
+                    0.1,
+                    10000
+                );
+                this.camera.position.set(50, 50, 50);
+                
+                // Renderer
+                this.renderer = new THREE.WebGLRenderer({ 
+                    canvas: canvas,
+                    antialias: true
+                });
+                this.renderer.setSize(container.clientWidth, container.clientHeight);
+                this.renderer.shadowMap.enabled = true;
+                this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+                
+                // FPS-style controls - rotate around camera position
+                this.controls = new THREE.OrbitControls(this.camera, this.renderer.domElement);
+                this.controls.enableDamping = true;
+                this.controls.dampingFactor = 0.05;
+                this.controls.enableZoom = false; // Disable mouse wheel zooming
+                this.controls.enablePan = false; // Disable right-click pan (we handle this with keys)
+                this.controls.target.copy(this.camera.position); // Start with target at camera position
+                
+                // Lighting
+                const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+                this.scene.add(ambientLight);
+                
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(100, 100, 50);
+                directionalLight.castShadow = true;
+                directionalLight.shadow.mapSize.width = 2048;
+                directionalLight.shadow.mapSize.height = 2048;
+                this.scene.add(directionalLight);
+                
+                // Start render loop
+                this.animate();
+                
+                // Handle resize
+                window.addEventListener('resize', () => this.onWindowResize());
+            }
+            
+            initEventListeners() {
+                const fileInput = document.getElementById('fileInput');
+                const iterationSlider = document.getElementById('iterationSlider');
+                const playPause = document.getElementById('playPause');
+                const reset = document.getElementById('reset');
+                const stepBack = document.getElementById('stepBack');
+                const stepForward = document.getElementById('stepForward');
+                const resetCamera = document.getElementById('resetCamera');
+                const showCosts = document.getElementById('showCosts');
+                const showPath = document.getElementById('showPath');
+                const showTerrain = document.getElementById('showTerrain');
+                const terrainOpacity = document.getElementById('terrainOpacity');
+                const cubeSize = document.getElementById('cubeSize');
+                const animSpeed = document.getElementById('animSpeed');
+                
+                fileInput.addEventListener('change', (e) => this.loadFile(e));
+                iterationSlider.addEventListener('input', (e) => this.setIteration(parseInt(e.target.value)));
+                playPause.addEventListener('click', () => this.togglePlayPause());
+                reset.addEventListener('click', () => this.reset());
+                stepBack.addEventListener('click', () => this.stepBack());
+                stepForward.addEventListener('click', () => this.stepForward());
+                resetCamera.addEventListener('click', () => this.resetCamera());
+                showCosts.addEventListener('change', (e) => this.setShowCosts(e.target.checked));
+                showPath.addEventListener('change', (e) => this.setShowPath(e.target.checked));
+                showTerrain.addEventListener('change', (e) => this.setShowTerrain(e.target.checked));
+                terrainOpacity.addEventListener('input', (e) => this.setTerrainOpacity(parseInt(e.target.value)));
+                cubeSize.addEventListener('change', (e) => this.setCubeSize(parseFloat(e.target.value)));
+                animSpeed.addEventListener('change', (e) => this.setAnimSpeed(parseInt(e.target.value)));
+                
+                // Mouse interaction with cubes - simple click detection
+                console.log('🔧 Adding click listener to canvas');
+                this.renderer.domElement.addEventListener('click', (event) => {
+                    console.log('🖱️ Canvas click event triggered!');
+                    this.onCanvasClick(event);
+                });
+                
+                // Keyboard controls
+                window.addEventListener('keydown', (event) => this.onKeyDown(event));
+                window.addEventListener('keyup', (event) => this.onKeyUp(event));
+            }
+            
+            async loadFile(event) {
+                const file = event.target.files[0];
+                if (!file) return;
+                
+                document.getElementById('loading').style.display = 'block';
+                document.getElementById('noData').style.display = 'none';
+                
+                try {
+                    const text = await file.text();
+                    this.data = JSON.parse(text);
+                    await this.initVisualization();
+                } catch (error) {
+                    alert('Error loading file: ' + error.message);
+                } finally {
+                    document.getElementById('loading').style.display = 'none';
+                }
+            }
+            
+            async initVisualization() {
+                if (!this.data) return;
+                
+                // Clear existing scene
+                this.clearScene();
+                
+                // Show controls
+                document.getElementById('iterationControls').style.display = 'block';
+                document.getElementById('viewControls').style.display = 'block';
+                document.getElementById('noData').style.display = 'none';
+                
+                // Setup iteration slider
+                const maxIterations = this.data.steps.length - 1;
+                const slider = document.getElementById('iterationSlider');
+                slider.max = maxIterations;
+                slider.value = 0;
+                
+                // Update info panel
+                this.updateInfoPanel();
+                
+                // Setup 3D scene bounds
+                this.setupScene();
+                
+                // Initialize visualization
+                this.currentIteration = 0;
+                this.setupTerrain();
+                this.updateVisualization();
+            }
+            
+            setupScene() {
+                const bounds = this.data.bounds;
+                
+                // Position camera to view the entire search area
+                const centerX = (bounds.minX + bounds.maxX) / 2;
+                const centerY = (bounds.minY + bounds.maxY) / 2;
+                const centerZ = (bounds.minZ + bounds.maxZ) / 2;
+                
+                const sizeX = bounds.maxX - bounds.minX;
+                const sizeY = bounds.maxY - bounds.minY;
+                const sizeZ = bounds.maxZ - bounds.minZ;
+                const maxSize = Math.max(sizeX, sizeY, sizeZ);
+                
+                this.camera.position.set(
+                    centerX + maxSize,
+                    centerY + maxSize,
+                    centerZ + maxSize
+                );
+                
+                // For FPS controls, set target to look towards the center
+                this.camera.lookAt(centerX, centerY, centerZ);
+                this.controls.target.copy(this.camera.position);
+                this.controls.target.add(this.camera.getWorldDirection(new THREE.Vector3()));
+                
+                // Store initial position and direction for reset
+                this.initialCameraPosition = this.camera.position.clone();
+                this.initialCameraTarget = this.controls.target.clone();
+                
+
+                
+                this.controls.update();
+            }
+            
+            setupTerrain() {
+                // Don't setup all terrain at once - we'll show it progressively
+                // This method is now called setupTerrainForIteration() in updateVisualization
+                console.log(`🏗️ Terrain will be shown progressively as chunks load...`);
+            }
+            
+            setupTerrainForIteration(currentIteration) {
+                if (!this.data || !this.data.worldBlocks || this.data.worldBlocks.length === 0) return;
+                
+                // Clear existing terrain
+                this.terrainInstances.forEach(instance => this.scene.remove(instance));
+                this.terrainInstances.clear();
+                
+                // Find which chunks should be visible at this iteration
+                const visibleChunks = new Set();
+                this.data.chunkLoadHistory.forEach(chunkEvent => {
+                    if (chunkEvent.iteration <= currentIteration) {
+                        const key = `${chunkEvent.chunkCoord.x},${chunkEvent.chunkCoord.y},${chunkEvent.chunkCoord.z}`;
+                        visibleChunks.add(key);
+                    }
+                });
+                
+                // Filter world blocks to only show those in visible chunks
+                const visibleBlocks = this.data.worldBlocks.filter(block => {
+                    const chunkX = Math.floor(block.position.x / 16);
+                    const chunkY = Math.floor(block.position.y / 16);
+                    const chunkZ = Math.floor(block.position.z / 16);
+                    const chunkKey = `${chunkX},${chunkY},${chunkZ}`;
+                    return visibleChunks.has(chunkKey);
+                });
+                
+                console.log(`🏗️ Showing terrain for iteration ${currentIteration}: ${visibleBlocks.length}/${this.data.worldBlocks.length} blocks`);
+                
+                // Group blocks by type for efficient instanced rendering
+                const blocksByType = {
+                    solid: [],
+                    water: [],
+                    lava: [],
+                    dirt: [],
+                    stone: [],
+                    wood: [],
+                    leaves: []
+                };
+                
+                visibleBlocks.forEach(block => {
+                    const name = block.objectName?.toLowerCase() || '';
+                    let type = 'solid';
+                    
+                    if (name.includes('water')) {
+                        type = 'water';
+                    } else if (name.includes('lava') || block.blockType === 111) {
+                        type = 'lava';
+                    } else if (name.includes('dirt') || name.includes('soil')) {
+                        type = 'dirt';
+                    } else if (name.includes('stone') || name.includes('rock')) {
+                        type = 'stone';
+                    } else if (name.includes('wood') || name.includes('log') || name.includes('trunk')) {
+                        type = 'wood';
+                    } else if (name.includes('leaves') || name.includes('leaf')) {
+                        type = 'leaves';
+                    }
+                    
+                    blocksByType[type].push(block);
+                    this.terrainPositions.set(this.positionKey(block.position), block);
+                });
+                
+                // Create instanced meshes for each terrain type
+                Object.entries(blocksByType).forEach(([type, blocks]) => {
+                    if (blocks.length === 0) return;
+                    
+                    const color = this.getTerrainColorByType(type);
+                    const instancedMesh = this.createInstancedTerrain(blocks, color);
+                    instancedMesh.visible = this.showTerrain;
+                    
+                    this.scene.add(instancedMesh);
+                    this.terrainInstances.set(type, instancedMesh);
+                });
+                
+                console.log(`✅ Terrain setup complete:`, {
+                    solid: blocksByType.solid.length,
+                    water: blocksByType.water.length, 
+                    lava: blocksByType.lava.length,
+                    dirt: blocksByType.dirt.length,
+                    stone: blocksByType.stone.length,
+                    wood: blocksByType.wood.length,
+                    leaves: blocksByType.leaves.length
+                });
+            }
+            
+            createTerrainCube(position, color) {
+                // Full-size cubes that touch each other for terrain
+                const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                const material = new THREE.MeshLambertMaterial({ 
+                    color: color,
+                    transparent: true,
+                    opacity: 0.6
+                });
+                const cube = new THREE.Mesh(geometry, material);
+                
+                cube.position.set(position.x, position.y, position.z);
+                cube.userData = { position: position, type: 'terrain' };
+                
+                return cube;
+            }
+            
+            createInstancedTerrain(blocks, color) {
+                const geometry = new THREE.BoxGeometry(1.0, 1.0, 1.0);
+                const material = new THREE.MeshLambertMaterial({ 
+                    color: color,
+                    transparent: true,
+                    opacity: this.terrainOpacity
+                });
+                
+                const instancedMesh = new THREE.InstancedMesh(geometry, material, blocks.length);
+                const dummy = new THREE.Object3D();
+                
+                blocks.forEach((block, index) => {
+                    dummy.position.set(block.position.x, block.position.y, block.position.z);
+                    dummy.updateMatrix();
+                    instancedMesh.setMatrixAt(index, dummy.matrix);
+                });
+                
+                instancedMesh.instanceMatrix.needsUpdate = true;
+                instancedMesh.userData = { type: 'terrain' };
+                
+                return instancedMesh;
+            }
+            
+            getTerrainColorByType(type) {
+                switch (type) {
+                    case 'water': return 0x4169E1; // Royal Blue
+                    case 'lava': return 0xFF4500; // Orange Red
+                    case 'dirt': return 0x8B4513; // Saddle Brown
+                    case 'stone': return 0x696969; // Dim Gray
+                    case 'wood': return 0xA0522D; // Sienna
+                    case 'leaves': return 0x228B22; // Forest Green
+                    case 'solid':
+                    default: return 0x808080; // Gray (unknown solids)
+                }
+            }
+            
+            getTerrainColor(block) {
+                const name = block.objectName?.toLowerCase() || '';
+                
+                if (name.includes('water')) {
+                    return 0x4169E1; // Royal Blue
+                } else if (name.includes('lava') || block.blockType === 111) {
+                    return 0xFF4500; // Orange Red
+                } else {
+                    return 0x8B4513; // Saddle Brown (solid blocks)
+                }
+            }
+            
+            clearScene() {
+                // Remove all cubes
+                this.cubes.forEach(cube => this.scene.remove(cube));
+                this.cubes.clear();
+                
+                // Remove all terrain instances
+                this.terrainInstances.forEach(instance => this.scene.remove(instance));
+                this.terrainInstances.clear();
+                this.terrainPositions.clear();
+                
+                // Remove path line
+                if (this.pathLine) {
+                    this.scene.remove(this.pathLine);
+                    this.pathLine = null;
+                }
+            }
+            
+            updateInfoPanel() {
+                const panel = document.getElementById('infoPanel');
+                panel.innerHTML = `
+                    <div><strong>Start:</strong> (${this.data.start.x}, ${this.data.start.y}, ${this.data.start.z})</div>
+                    <div><strong>End:</strong> (${this.data.end.x}, ${this.data.end.y}, ${this.data.end.z})</div>
+                    <div><strong>Success:</strong> ${this.data.success ? 'Yes' : 'No'}</div>
+                    <div><strong>Total Iterations:</strong> ${this.data.iterations}</div>
+                    <div><strong>Steps Recorded:</strong> ${this.data.steps.length}</div>
+                    <div><strong>Path Length:</strong> ${this.data.finalPath ? this.data.finalPath.length : 'None'}</div>
+                `;
+            }
+            
+            createCube(position, color, scale = 1, label = null) {
+                const group = new THREE.Group();
+                
+                // Create the cube
+                const geometry = new THREE.BoxGeometry(this.cubeSize * scale, this.cubeSize * scale, this.cubeSize * scale);
+                const material = new THREE.MeshLambertMaterial({ color: color });
+                const cube = new THREE.Mesh(geometry, material);
+                
+                cube.position.set(0, 0, 0); // Relative to group
+                cube.userData = { position: position, type: 'pathfinding' };
+                group.add(cube);
+                
+                // Add text label if provided
+                if (label && this.showCosts) {
+                    const canvas = document.createElement('canvas');
+                    const context = canvas.getContext('2d');
+                    canvas.width = 64;
+                    canvas.height = 32;
+                    context.fillStyle = '#ffffff';
+                    context.font = '12px Arial';
+                    context.textAlign = 'center';
+                    context.fillText(label, 32, 20);
+                    
+                    const texture = new THREE.CanvasTexture(canvas);
+                    const spriteMaterial = new THREE.SpriteMaterial({ map: texture });
+                    const sprite = new THREE.Sprite(spriteMaterial);
+                    sprite.scale.set(1, 0.5, 1);
+                    sprite.position.set(0, this.cubeSize * scale + 0.3, 0);
+                    group.add(sprite);
+                }
+                
+                group.position.set(position.x, position.y, position.z);
+                group.userData = { position: position, type: 'pathfinding' };
+                
+                return group;
+            }
+            
+            updateVisualization() {
+                if (!this.data || this.currentIteration >= this.data.steps.length) return;
+                
+                const step = this.data.steps[this.currentIteration];
+                
+                // Update terrain based on chunks loaded at this iteration
+                this.setupTerrainForIteration(this.currentIteration);
+                
+                // Clear existing cubes
+                this.cubes.forEach(cube => this.scene.remove(cube));
+                this.cubes.clear();
+                
+                // Add cubes for different node types
+                const cubePromises = [];
+                
+                // Start position (green)
+                const startCube = this.createCube(this.data.start, 0x00ff00, 1.2);
+                this.scene.add(startCube);
+                this.cubes.set(this.positionKey(this.data.start), startCube);
+                
+                // End position (red)
+                const endCube = this.createCube(this.data.end, 0xff0000, 1.2);
+                this.scene.add(endCube);
+                this.cubes.set(this.positionKey(this.data.end), endCube);
+                
+                // Current node (yellow)
+                const currentCube = this.createCube(step.currentNode, 0xffff00, 1.3);
+                this.scene.add(currentCube);
+                this.cubes.set(this.positionKey(step.currentNode), currentCube);
+                
+                // Open set (light blue)
+                step.openSet.forEach(pos => {
+                    const key = this.positionKey(pos);
+                    if (!this.cubes.has(key)) {
+                        const fCost = step.fCosts && step.fCosts[key] ? step.fCosts[key].toFixed(1) : null;
+                        const cube = this.createCube(pos, 0x87ceeb, 1.0, fCost);
+                        this.scene.add(cube);
+                        this.cubes.set(key, cube);
+                    }
+                });
+                
+                // Closed set (light red)
+                step.closedSet.forEach(pos => {
+                    const key = this.positionKey(pos);
+                    if (!this.cubes.has(key)) {
+                        const fCost = step.fCosts && step.fCosts[key] ? step.fCosts[key].toFixed(1) : null;
+                        const cube = this.createCube(pos, 0xff6b6b, 0.8, fCost);
+                        this.scene.add(cube);
+                        this.cubes.set(key, cube);
+                    }
+                });
+                
+                // Current neighbors (orange)
+                if (step.neighbors) {
+                    step.neighbors.forEach(pos => {
+                        const key = this.positionKey(pos);
+                        if (!this.cubes.has(key)) {
+                            const cube = this.createCube(pos, 0xffa500, 1.1);
+                            this.scene.add(cube);
+                            this.cubes.set(key, cube);
+                        }
+                    });
+                }
+                
+                // Rejected neighbors (dark red)
+                if (step.rejectedNeighbors) {
+                    step.rejectedNeighbors.forEach(rejected => {
+                        const key = this.positionKey(rejected.position);
+                        if (!this.cubes.has(key)) {
+                            const cube = this.createCube(rejected.position, 0xdc143c, 0.9);
+                            cube.userData.rejectionReason = rejected.reason;
+                            this.scene.add(cube);
+                            this.cubes.set(key, cube);
+                        }
+                    });
+                }
+                
+                // Final path (purple)
+                if (this.showPath && this.data.finalPath) {
+                    this.updatePathVisualization();
+                }
+                
+                // Update UI
+                document.getElementById('iterationLabel').textContent = this.currentIteration;
+                this.updateCameraInfo();
+            }
+            
+            updatePathVisualization() {
+                if (this.pathLine) {
+                    this.scene.remove(this.pathLine);
+                    this.pathLine = null;
+                }
+                
+                if (!this.data.finalPath || this.data.finalPath.length < 2) {
+                    console.log(`⚠️ No path to display: finalPath=${!!this.data.finalPath}, length=${this.data.finalPath?.length || 0}`);
+                    return;
+                }
+                
+                console.log(`🟣 Drawing path with ${this.data.finalPath.length} points`);
+                
+                const points = this.data.finalPath.map(pos => 
+                    new THREE.Vector3(pos.x, pos.y + 0.1, pos.z)
+                );
+                
+                const geometry = new THREE.BufferGeometry().setFromPoints(points);
+                const material = new THREE.LineBasicMaterial({ 
+                    color: 0x9370db, 
+                    linewidth: 5
+                });
+                
+                this.pathLine = new THREE.Line(geometry, material);
+                this.pathLine.visible = this.showPath;
+                this.scene.add(this.pathLine);
+            }
+            
+            positionKey(pos) {
+                return `${pos.x},${pos.y},${pos.z}`;
+            }
+            
+            isPosition(pos1, pos2) {
+                return pos1.x === pos2.x && pos1.y === pos2.y && pos1.z === pos2.z;
+            }
+            
+            calculateDistance(from, to) {
+                return Math.sqrt(
+                    Math.pow(to.x - from.x, 2) +
+                    Math.pow(to.y - from.y, 2) +
+                    Math.pow(to.z - from.z, 2)
+                );
+            }
+            
+            setIteration(iteration) {
+                this.currentIteration = Math.max(0, Math.min(iteration, this.data.steps.length - 1));
+                this.updateVisualization();
+            }
+            
+            setShowCosts(show) {
+                this.showCosts = show;
+                this.updateVisualization(); // Re-render to show/hide costs
+            }
+            
+            setShowPath(show) {
+                this.showPath = show;
+                if (this.pathLine) {
+                    this.pathLine.visible = show;
+                }
+            }
+            
+            setShowTerrain(show) {
+                this.showTerrain = show;
+                this.terrainInstances.forEach(instance => {
+                    instance.visible = show;
+                });
+            }
+            
+            setTerrainOpacity(opacityPercent) {
+                this.terrainOpacity = opacityPercent / 100.0; // Convert percentage to decimal
+                
+                // Update the label
+                document.getElementById('opacityLabel').textContent = `${opacityPercent}%`;
+                
+                // Update all terrain instances
+                this.terrainInstances.forEach(instance => {
+                    instance.material.opacity = this.terrainOpacity;
+                    instance.material.transparent = this.terrainOpacity < 1.0;
+                });
+            }
+            
+            setCubeSize(size) {
+                this.cubeSize = size;
+                this.updateVisualization();
+            }
+            
+            setAnimSpeed(speed) {
+                this.animSpeed = speed;
+            }
+            
+            togglePlayPause() {
+                if (this.isPlaying) {
+                    this.pause();
+                } else {
+                    this.play();
+                }
+            }
+            
+            play() {
+                this.isPlaying = true;
+                document.getElementById('playPause').textContent = 'Pause';
+                
+                this.playInterval = setInterval(() => {
+                    if (this.currentIteration < this.data.steps.length - 1) {
+                        this.setIteration(this.currentIteration + 1);
+                        document.getElementById('iterationSlider').value = this.currentIteration;
+                    } else {
+                        this.pause();
+                    }
+                }, this.animSpeed);
+            }
+            
+            pause() {
+                this.isPlaying = false;
+                document.getElementById('playPause').textContent = 'Play';
+                
+                if (this.playInterval) {
+                    clearInterval(this.playInterval);
+                    this.playInterval = null;
+                }
+            }
+            
+            reset() {
+                this.pause();
+                this.setIteration(0);
+                document.getElementById('iterationSlider').value = 0;
+            }
+            
+            stepBack() {
+                this.pause();
+                if (this.currentIteration > 0) {
+                    this.setIteration(this.currentIteration - 1);
+                    document.getElementById('iterationSlider').value = this.currentIteration;
+                }
+            }
+            
+            stepForward() {
+                this.pause();
+                if (this.currentIteration < this.data.steps.length - 1) {
+                    this.setIteration(this.currentIteration + 1);
+                    document.getElementById('iterationSlider').value = this.currentIteration;
+                }
+            }
+            
+            onCanvasClick(event) {
+                // Raycast to detect cube clicks
+                const mouse = new THREE.Vector2();
+                const rect = this.renderer.domElement.getBoundingClientRect();
+                
+                mouse.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+                mouse.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+                
+                const raycaster = new THREE.Raycaster();
+                raycaster.setFromCamera(mouse, this.camera);
+                
+                // Include pathfinding cubes and instanced terrain meshes in raycast
+                const pathfindingCubes = Array.from(this.cubes.values());
+                const terrainMeshes = Array.from(this.terrainInstances.values());
+                const allObjects = [...pathfindingCubes, ...terrainMeshes];
+                
+                const intersects = raycaster.intersectObjects(allObjects, true); // true = recursive for groups
+                
+                const clickInfo = document.getElementById('clickInfo');
+                const clickDetails = document.getElementById('clickDetails');
+                
+                if (intersects.length > 0) {
+                    const intersectedObject = intersects[0].object;
+                    const point = intersects[0].point;
+                    
+                    clickInfo.style.display = 'block';
+                    
+                    // For instanced meshes, find the closest block position
+                    if (intersectedObject.isInstancedMesh) {
+                        const pos = {
+                            x: Math.round(point.x),
+                            y: Math.round(point.y), 
+                            z: Math.round(point.z)
+                        };
+                        
+                        const terrainBlock = this.terrainPositions.get(this.positionKey(pos));
+                        if (terrainBlock) {
+                            clickDetails.innerHTML = `
+                                <strong>TERRAIN BLOCK</strong><br>
+                                Position: (${pos.x}, ${pos.y}, ${pos.z})<br>
+                                Type: ${terrainBlock.blockType}<br>
+                                Name: ${terrainBlock.objectName}<br>
+                                Pass Through: ${terrainBlock.passThrough}
+                            `;
+                        } else {
+                            clickDetails.innerHTML = `
+                                <strong>TERRAIN BLOCK</strong><br>
+                                Position: (${pos.x}, ${pos.y}, ${pos.z})<br>
+                                No block data found
+                            `;
+                        }
+                    } else {
+                        // Regular pathfinding cube or group
+                        let targetObject = intersectedObject;
+                        if (targetObject.parent && targetObject.parent.userData.position) {
+                            targetObject = targetObject.parent; // Get the group if this is a child mesh
+                        }
+                        
+                        const pos = targetObject.userData.position;
+                        const cubeType = targetObject.userData.type || 'pathfinding';
+                        
+                        if (cubeType === 'pathfinding' && this.data && this.currentIteration < this.data.steps.length) {
+                            const step = this.data.steps[this.currentIteration];
+                            const posKey = this.positionKey(pos);
+                            
+                            // Determine node type based on which set it's in
+                            let nodeType = 'Unknown';
+                            let rejectionReason = null;
+                            
+                            if (this.isPosition(pos, this.data.start)) nodeType = 'Start';
+                            else if (this.isPosition(pos, this.data.end)) nodeType = 'End';
+                            else if (this.isPosition(pos, step.currentNode)) nodeType = 'Current';
+                            else if (step.openSet && step.openSet.some(p => this.isPosition(pos, p))) nodeType = 'Open Set';
+                            else if (step.closedSet && step.closedSet.some(p => this.isPosition(pos, p))) nodeType = 'Closed Set';
+                            else if (step.neighbors && step.neighbors.some(p => this.isPosition(pos, p))) nodeType = 'Neighbor';
+                            else if (step.rejectedNeighbors && step.rejectedNeighbors.some(r => this.isPosition(pos, r.position))) {
+                                nodeType = 'Rejected';
+                                const rejected = step.rejectedNeighbors.find(r => this.isPosition(pos, r.position));
+                                rejectionReason = rejected ? rejected.reason : 'Unknown';
+                            }
+                            else if (this.data.finalPath && this.data.finalPath.some(p => this.isPosition(pos, p))) nodeType = 'Path';
+                            
+                            let infoHtml = `
+                                <strong>${nodeType.toUpperCase()}</strong><br>
+                                Position: (${pos.x}, ${pos.y}, ${pos.z})<br>
+                            `;
+                            
+                            // Show rejection reason for rejected neighbors
+                            if (rejectionReason) {
+                                infoHtml += `
+                                    <br><strong style="color: #ff4444;">REJECTION REASON:</strong><br>
+                                    <span style="color: #ff8888;">${rejectionReason}</span><br>
+                                `;
+                            }
+                            
+                            // Add cost information
+                            if (step.fCosts && step.fCosts[posKey] !== undefined) {
+                                infoHtml += `
+                                    <br><strong>Costs:</strong><br>
+                                    F-Cost: ${step.fCosts[posKey].toFixed(2)}<br>
+                                    G-Cost: ${step.gCosts[posKey].toFixed(2)}<br>
+                                    H-Cost: ${step.hCosts[posKey].toFixed(2)}<br>
+                                `;
+                            }
+                            
+                            // Add physics information
+                            if (step.physics && step.physics[posKey]) {
+                                const phys = step.physics[posKey];
+                                infoHtml += `
+                                    <br><strong>Physics:</strong><br>
+                                    Jumps: ${phys.jumps}/3<br>
+                                    Glides: ${phys.glides}/10<br>
+                                    Fall Height: ${phys.fallHeight}<br>
+                                    Has Gravity: ${phys.hasGravity}<br>
+                                    Move Units: ${(phys.moveUnits / 1e18).toFixed(3)}<br>
+                                `;
+                            }
+                            
+                            // Add movement analysis
+                            if (nodeType === 'Neighbor' || nodeType === 'Open Set') {
+                                const dy = pos.y - step.currentNode.y;
+                                let movementType = 'Horizontal';
+                                if (dy > 0) movementType = `Jump (+${dy})`;
+                                else if (dy < 0) movementType = `Fall (${dy})`;
+                                
+                                infoHtml += `
+                                    <br><strong>Movement:</strong><br>
+                                    Type: ${movementType}<br>
+                                    Distance: ${this.calculateDistance(step.currentNode, pos).toFixed(2)}<br>
+                                `;
+                            }
+                            
+                            clickDetails.innerHTML = infoHtml;
+                        } else {
+                            clickDetails.innerHTML = `
+                                <strong>${cubeType.toUpperCase()}</strong><br>
+                                Position: (${pos.x}, ${pos.y}, ${pos.z})
+                            `;
+                        }
+                    }
+                } else {
+                    clickInfo.style.display = 'none';
+                }
+            }
+            
+            updateCameraInfo() {
+                const pos = this.camera.position;
+                const target = this.controls.target;
+                
+                document.getElementById('cameraInfo').innerHTML = `
+                    Camera: (${pos.x.toFixed(1)}, ${pos.y.toFixed(1)}, ${pos.z.toFixed(1)})<br>
+                    Target: (${target.x.toFixed(1)}, ${target.y.toFixed(1)}, ${target.z.toFixed(1)})
+                `;
+            }
+            
+            animate() {
+                requestAnimationFrame(() => this.animate());
+                
+                this.handleKeyboardMovement();
+                this.controls.update();
+                this.renderer.render(this.scene, this.camera);
+            }
+            
+            onWindowResize() {
+                const container = document.getElementById('canvas').parentElement;
+                
+                this.camera.aspect = container.clientWidth / container.clientHeight;
+                this.camera.updateProjectionMatrix();
+                
+                this.renderer.setSize(container.clientWidth, container.clientHeight);
+            }
+            
+            onKeyDown(event) {
+                if (this.keys.hasOwnProperty(event.key)) {
+                    this.keys[event.key] = true;
+                    event.preventDefault();
+                }
+            }
+            
+            onKeyUp(event) {
+                if (this.keys.hasOwnProperty(event.key)) {
+                    this.keys[event.key] = false;
+                    event.preventDefault();
+                }
+            }
+            
+            handleKeyboardMovement() {
+                if (!this.data) return;
+                
+                const panSpeed = 0.1;
+                const panVector = new THREE.Vector3();
+                
+                // Get camera's right and up vectors
+                const cameraRight = new THREE.Vector3();
+                const cameraUp = new THREE.Vector3(0, 1, 0);
+                const cameraForward = new THREE.Vector3();
+                
+                this.camera.getWorldDirection(cameraForward);
+                cameraRight.crossVectors(cameraForward, cameraUp).normalize();
+                
+                // WASD movement
+                if (this.keys.w || this.keys.ArrowUp) {
+                    panVector.add(cameraForward.clone().multiplyScalar(panSpeed));
+                }
+                if (this.keys.s || this.keys.ArrowDown) {
+                    panVector.add(cameraForward.clone().multiplyScalar(-panSpeed));
+                }
+                if (this.keys.a || this.keys.ArrowLeft) {
+                    panVector.add(cameraRight.clone().multiplyScalar(-panSpeed));
+                }
+                if (this.keys.d || this.keys.ArrowRight) {
+                    panVector.add(cameraRight.clone().multiplyScalar(panSpeed));
+                }
+                
+                // Q/E vertical movement
+                if (this.keys.q) {
+                    panVector.add(cameraUp.clone().multiplyScalar(-panSpeed)); // Descend
+                }
+                if (this.keys.e) {
+                    panVector.add(cameraUp.clone().multiplyScalar(panSpeed)); // Ascend
+                }
+                
+                if (panVector.length() > 0) {
+                    this.camera.position.add(panVector);
+                    // For FPS controls, move target to stay centered on camera
+                    this.controls.target.copy(this.camera.position);
+                    this.controls.target.add(this.camera.getWorldDirection(new THREE.Vector3()));
+                    this.controls.update();
+                }
+            }
+            
+            resetCamera() {
+                if (this.initialCameraPosition && this.initialCameraTarget) {
+                    this.camera.position.copy(this.initialCameraPosition);
+                    this.controls.target.copy(this.initialCameraTarget);
+                    this.controls.update();
+                }
+            }
+        }
+        
+        // Initialize visualizer
+        const visualizer = new Pathfinding3DVisualizer();
+    </script>
+</body>
+</html>
